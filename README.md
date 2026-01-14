@@ -50,3 +50,4 @@
 ### Notes / known artifacts
 - Some sequence pairs can create **very thin keys** after normalization (e.g., vertical chain layouts). The renderer intentionally avoids min-size clamping because that can force visual overlaps and break the geometry guarantees.
 
+
