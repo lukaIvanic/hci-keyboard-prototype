@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>HCI Keyboard Layout Prototype</title>
+    <link rel="stylesheet" href="styles.css" />
+
+    <!-- No build tools: scripts execute in-order with defer. -->
+    <script defer src="src/layouts.js"></script>
+    <script defer src="src/metrics.js"></script>
+    <script defer src="src/logger.js"></script>
+    <script defer src="src/exportCsv.js"></script>
+    <script defer src="src/theoryDistanceLinear.js"></script>
+    <script defer src="src/keyboard.js"></script>
+    <script defer src="src/app.js"></script>
+  </head>
+  <body>
+    <main class="container">
+      <header class="header">
+        <div>
+          <h1 class="title">Keyboard Layout Prototype</h1>
+          <p class="subtitle">
+            On-screen keyboard + copy-typing trials + logging (WPM / edit distance / backspaces) + CSV export.
+          </p>
+        </div>
+        <div class="buttons">
+          <a class="btn btnSecondary" href="generator.html">Open generator</a>
+        </div>
+      </header>
+
+      <section class="panel">
+        <h2 class="sectionTitle">Experiment</h2>
+        <div class="controls">
+          <div class="buttons">
+            <button id="experimentStartBtn" class="btn btnPrimary" type="button">Start experiment</button>
+            <button id="experimentStopBtn" class="btn btnDanger" type="button">Stop / Reset</button>
+            <button id="experimentSkipBtn" class="btn btnSecondary" type="button">Skip phase</button>
+          </div>
+          <div class="phraseText" style="min-width: 240px">
+            <div id="experimentStatus" class="hint">Idle.</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="controls">
+          <label class="field">
+            <span class="fieldLabel">Layout</span>
+            <select id="layoutSelect" class="select"></select>
+          </label>
+
+          <div class="buttons">
+            <button id="resetTrialBtn" class="btn btnSecondary" type="button">Reset</button>
+            <button id="submitTrialBtn" class="btn btnPrimary" type="button">Submit phrase</button>
+            <button id="nextPhraseBtn" class="btn btnSecondary" type="button">Next phrase</button>
+          </div>
+        </div>
+
+        <div class="phrases">
+          <div class="phraseRow">
+            <div class="badge">Target</div>
+            <div id="targetPhrase" class="phraseText"></div>
+          </div>
+          <div class="phraseRow">
+            <div class="badge">Typed</div>
+            <div id="typedText" class="typedText" aria-live="polite"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div id="keyboardContainer" class="keyboardContainer" aria-label="On-screen keyboard"></div>
+      </section>
+
+      <section class="panel">
+        <div class="exports">
+          <button id="downloadCsvBtn" class="btn btnPrimary" type="button">Download CSV</button>
+          <button id="downloadJsonBtn" class="btn btnSecondary" type="button">Download JSON (raw)</button>
+          <button id="clearResultsBtn" class="btn btnDanger" type="button">Clear results</button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2 class="sectionTitle">Trial results</h2>
+        <div class="tableWrap">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Trial</th>
+                <th>Layout</th>
+                <th>Phrase</th>
+                <th>WPM</th>
+                <th>Edit distance</th>
+                <th>Backspaces</th>
+                <th>Elapsed (s)</th>
+              </tr>
+            </thead>
+            <tbody id="resultsTableBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2 class="sectionTitle">Theoretical estimate (linear distance)</h2>
+        <p class="hint">
+          Simple baseline model: total time = tapTime + moveCost · distance per transition, averaged over the built-in
+          phrase list.
+        </p>
+        <div class="controls" style="margin-top: 10px">
+          <label class="field">
+            <span class="fieldLabel">Distance metric (theory)</span>
+            <span style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap">
+              <label style="display: inline-flex; gap: 8px; align-items: center">
+                <input id="theoryUseCenter" type="checkbox" />
+                <span style="font-size: 13px; color: var(--text)">Center-to-center</span>
+              </label>
+              <label style="display: inline-flex; gap: 8px; align-items: center">
+                <input id="theoryUseEdge" type="checkbox" />
+                <span style="font-size: 13px; color: var(--text)">Edge-to-edge</span>
+              </label>
+              <span class="hint" style="margin: 0">Pick one or both.</span>
+            </span>
+          </label>
+        </div>
+        <div class="tableWrap">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Layout</th>
+                <th>Predicted WPM</th>
+                <th>Avg ms/char</th>
+              </tr>
+            </thead>
+            <tbody id="theoryTableBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <footer class="footer">
+        <p class="hint">
+          Notes: This prototype intentionally avoids native text inputs to prevent mobile autocorrect/IME interference.
+        </p>
+      </footer>
+    </main>
+  </body>
+</html>
+

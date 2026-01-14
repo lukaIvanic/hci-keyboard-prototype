@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Layout Generator (Sequence Pair)</title>
+    <link rel="stylesheet" href="styles.css" />
+
+    <!-- Shared scripts (no build tools). -->
+    <script defer src="src/layouts.js"></script>
+    <script defer src="src/metrics.js"></script>
+    <script defer src="corpus/gutenberg/pg1342_bigrams.js"></script>
+    <script defer src="src/theoryDistanceLinear.js"></script>
+    <script defer src="src/keyboard.js"></script>
+    <script defer src="src/geneticSearch.js"></script>
+
+    <!-- Generator page logic. -->
+    <script defer src="src/generatorApp.js"></script>
+  </head>
+  <body>
+    <main class="container">
+      <header class="header">
+        <div>
+          <h1 class="title">Live Layout Generator</h1>
+          <p class="subtitle">
+            Genetic-algorithm sequence-pair search scored by theoretical WPM (Gutenberg bigrams + Fitts’ Law). Keeps a live top 5.
+          </p>
+        </div>
+        <div class="buttons">
+          <a class="btn btnSecondary" href="index.html">Back to typing prototype</a>
+        </div>
+      </header>
+
+      <section class="panel">
+        <div class="controls">
+          <div class="buttons">
+            <button id="startStopBtn" class="btn btnPrimary" type="button">Start</button>
+            <button id="resetBtn" class="btn btnDanger" type="button">Reset</button>
+          </div>
+
+          <label class="field">
+            <span class="fieldLabel">Generation options</span>
+            <span style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap">
+              <label style="display: inline-flex; gap: 8px; align-items: center">
+                <span style="font-size: 13px; color: var(--text)">Key sizes</span>
+                <select id="sizeModeSelect" class="select" style="height: 32px">
+                  <option value="fixed">Fixed (1x1)</option>
+                  <option value="random">Random (float)</option>
+                  <option value="integer">Integer (1–5)</option>
+                </select>
+              </label>
+              <label style="display: inline-flex; gap: 8px; align-items: center">
+                <span style="font-size: 13px; color: var(--text)">Workers</span>
+                <select id="workerCountSelect" class="select" style="height: 32px">
+                  <option value="auto">Auto</option>
+                  <option value="1">1</option>
+                  <option value="2">2</option>
+                  <option value="4">4</option>
+                  <option value="6">6</option>
+                  <option value="8">8</option>
+                </select>
+              </label>
+              <span class="hint" style="margin: 0">Top-5 updates only on improvements.</span>
+            </span>
+          </label>
+
+          <label class="field">
+            <span class="fieldLabel">Distance metric (scoring + diversity)</span>
+            <span style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap">
+              <label style="display: inline-flex; gap: 8px; align-items: center">
+                <input id="distUseCenter" type="checkbox" />
+                <span style="font-size: 13px; color: var(--text)">Center-to-center</span>
+              </label>
+              <label style="display: inline-flex; gap: 8px; align-items: center">
+                <input id="distUseEdge" type="checkbox" />
+                <span style="font-size: 13px; color: var(--text)">Edge-to-edge</span>
+              </label>
+              <span class="hint" style="margin: 0">Pick one or both.</span>
+            </span>
+          </label>
+
+          <details style="margin-top: 10px">
+            <summary class="hint" style="cursor: pointer">GA options (live)</summary>
+            <div class="phraseText" style="margin-top: 10px">
+              <label class="field">
+                <span class="fieldLabel">Mutation rate: <span id="gaMutationRateValue" class="hint"></span></span>
+                <input id="gaMutationRate" type="range" min="0" max="0.9" step="0.01" />
+                <span class="hint" style="margin-top: 6px; display: block">Higher = more disruptive children (more exploration).</span>
+              </label>
+
+              <label class="field">
+                <span class="fieldLabel">Immigrant rate: <span id="gaImmigrantRateValue" class="hint"></span></span>
+                <input id="gaImmigrantRate" type="range" min="0" max="0.25" step="0.01" />
+                <span class="hint" style="margin-top: 6px; display: block">Chance an offspring is fully random.</span>
+              </label>
+
+              <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px">
+                <label class="field">
+                  <span class="fieldLabel">Tournament k</span>
+                  <input id="gaTournamentK" type="number" min="1" max="10" step="1" />
+                  <span class="hint" style="margin-top: 6px; display: block">Lower = less selection pressure (more diversity).</span>
+                </label>
+
+                <label class="field">
+                  <span class="fieldLabel">Elite count</span>
+                  <input id="gaEliteCount" type="number" min="0" max="50" step="1" />
+                  <span class="hint" style="margin-top: 6px; display: block">How many best individuals are protected from replacement.</span>
+                </label>
+
+                <label class="field">
+                  <span class="fieldLabel">RTR window</span>
+                  <input id="gaRtrWindow" type="number" min="1" max="50" step="1" />
+                  <span class="hint" style="margin-top: 6px; display: block">Higher = more “local” competition (preserves niches).</span>
+                </label>
+              </div>
+
+              <label class="field">
+                <span class="fieldLabel">Crossover rate: <span id="gaCrossoverRateValue" class="hint"></span></span>
+                <input id="gaCrossoverRate" type="range" min="0" max="1" step="0.01" />
+              </label>
+
+              <label class="field">
+                <span class="fieldLabel">Size mutation rate: <span id="gaSizeMutationRateValue" class="hint"></span></span>
+                <input id="gaSizeMutationRate" type="range" min="0" max="0.5" step="0.01" />
+                <span class="hint" style="margin-top: 6px; display: block">Only matters when “Randomize key sizes” is enabled.</span>
+              </label>
+
+              <div class="hint" style="margin-top: 6px">
+                Changes apply immediately; use Reset if you want to restart from scratch.
+              </div>
+            </div>
+          </details>
+        </div>
+
+        <div class="phrases" style="margin-top: 10px">
+          <div class="phraseRow">
+            <div class="badge">Status</div>
+            <div class="phraseText">
+              <span id="statusText">Idle.</span>
+              <span class="hint" id="statusDetails" style="display: block; margin-top: 6px"></span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2 class="sectionTitle">Corpus (bigram counts)</h2>
+        <p class="hint">This generator is intended to score layouts using Gutenberg bigrams (letters + space).</p>
+
+        <details>
+          <summary class="hint" style="cursor: pointer">Show corpus metadata + top bigrams</summary>
+          <div class="phraseText" style="margin-top: 10px">
+            <div id="corpusMeta" class="hint"></div>
+
+            <div style="margin-top: 10px; display: flex; gap: 10px; flex-wrap: wrap">
+              <button id="downloadCorpusJsonBtn" class="btn btnSecondary" type="button">Download corpus JSON</button>
+            </div>
+
+            <div class="tableWrap" style="margin-top: 12px">
+              <table class="table">
+                <thead>
+                  <tr>
+                    <th>Rank</th>
+                    <th>Bigram</th>
+                    <th>Count</th>
+                    <th>%</th>
+                  </tr>
+                </thead>
+                <tbody id="bigramsTableBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </details>
+      </section>
+
+      <section class="panel">
+        <h2 class="sectionTitle">Preview</h2>
+        <div class="controls" style="margin: 10px 0 12px">
+          <label class="field" style="min-width: 240px; flex: 1">
+            <span class="fieldLabel">Save name</span>
+            <input id="saveLayoutName" class="select" type="text" placeholder="e.g., My GA layout" />
+          </label>
+          <div class="buttons">
+            <button id="saveLayoutBtn" class="btn btnSecondary" type="button">Save to typing page</button>
+            <button id="clearSavedLayoutsBtn" class="btn btnDanger" type="button">Clear saved</button>
+          </div>
+          <div id="saveLayoutStatus" class="hint" style="min-width: 220px" role="status" aria-live="polite"></div>
+        </div>
+        <div id="keyboardContainer" class="keyboardContainer" aria-label="Keyboard preview"></div>
+      </section>
+
+      <section class="panel">
+        <h2 class="sectionTitle">Top 5 leaderboard</h2>
+        <p class="hint">Click an entry to preview it.</p>
+        <div class="tableWrap">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Predicted WPM</th>
+                <th>Avg ms/char</th>
+                <th>Sizes</th>
+                <th>Generated at</th>
+              </tr>
+            </thead>
+            <tbody id="leaderboardBody"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>
+
