@@ -316,21 +316,74 @@
     specialRowY: 3,
   });
 
-  const alphabetical = compileRowLayout({
-    id: "alpha",
-    name: "Alphabetical",
-    rows: ["abcdefghij", "klmnopqrs", "tuvwxyz"],
-    offsets: [0, 0.5, 1.5],
-    specialRowY: 3,
+  const veryGood = finalizeLayout({
+    id: "very_good",
+    name: "Very good",
+    keys: [
+      makeKey({ id: "a", label: "A", type: "char", x: 1.3491857855575489, y: 1.9988058448867336, w: 1.7007226186357707, h: 0.8623351498632212 }),
+      makeKey({ id: "b", label: "B", type: "char", x: 5.6009923321469754, y: 0, w: 0.8503613093178853, h: 0.970583418003457 }),
+      makeKey({ id: "c", label: "C", type: "char", x: 7.101510326213068, y: 1.8409198867552081, w: 1.7007226186357707, h: 0.8511873447261947 }),
+      makeKey({ id: "d", label: "D", type: "char", x: 6.451353641464861, y: 0.9739307764828259, w: 1.7007226186357707, h: 0.8658313269066652 }),
+      makeKey({ id: "e", label: "E", type: "char", x: 4.750730022862788, y: 1.8462494467836124, w: 0.8503613093178853, h: 1.0655671819534793 }),
+      makeKey({ id: "f", label: "F", type: "char", x: 1.3491857855575489, y: 1.147254561387061, w: 1.7007226186357707, h: 0.8515512834996726 }),
+      makeKey({ id: "g", label: "G", type: "char", x: 6.451353641464861, y: 0, w: 1.7007226186357707, h: 0.9739307764828259 }),
+      makeKey({ id: "h", label: "H", type: "char", x: 3.900368713544903, y: 2.696726151143898, w: 0.8503613093178853, h: 1.3009834394041235 }),
+      makeKey({ id: "i", label: "I", type: "char", x: 5.6010913321806735, y: 1.8419136590223788, w: 1.5004189940323955, h: 0.8510385196987282 }),
+      makeKey({ id: "j", label: "J", type: "char", x: 1.3491857855575489, y: 0, w: 0.8503613093178853, h: 1.1445684273004468 }),
+      makeKey({ id: "k", label: "K", type: "char", x: 8.152076260100632, y: 0.9739307764828259, w: 1.7007226186357707, h: 0.8669891102723819 }),
+      makeKey({ id: "l", label: "L", type: "char", x: 3.900269713511205, y: 0, w: 0.8503613093178853, h: 0.9837161629987522 }),
+      makeKey({ id: "m", label: "M", type: "char", x: 5.6010913321806735, y: 2.692952178721107, w: 1.7007226186357707, h: 1.2903556366322482 }),
+      makeKey({ id: "n", label: "N", type: "char", x: 5.6009923321469754, y: 0.9720964816260368, w: 0.8503613093178853, h: 0.869817177396342 }),
+      makeKey({ id: "o", label: "O", type: "char", x: 2.199547094875434, y: 0, w: 1.7007226186357707, h: 1.147254561387061 }),
+      makeKey({ id: "p", label: "P", type: "char", x: 1.7007226186357707, y: 2.861140994749955, w: 1.349284785591247, h: 1.1351482550615062 }),
+      makeKey({ id: "q", label: "Q", type: "char", x: 0, y: 1.9988058448867336, w: 1.344733679846982, h: 0.8557389040588396 }),
+      makeKey({ id: "r", label: "R", type: "char", x: 3.0499084041933195, y: 1.147254561387061, w: 0.8503613093178853, h: 0.8671290158045974 }),
+      makeKey({ id: "s", label: "S", type: "char", x: 3.900368713544903, y: 1.8462494467836124, w: 0.8503613093178853, h: 0.8504767043602856 }),
+      makeKey({ id: "t", label: "T", type: "char", x: 3.050007404227018, y: 2.0143835771916585, w: 0.8503613093178853, h: 1.382443514552771 }),
+      makeKey({ id: "u", label: "U", type: "char", x: 0, y: 2.861140994749955, w: 1.7007226186357707, h: 1.138859005250045 }),
+      makeKey({ id: "v", label: "V", type: "char", x: 0, y: 0.8589832175937914, w: 1.3491857855575489, h: 1.125607976877953 }),
+      makeKey({ id: "w", label: "W", type: "char", x: 4.750730022862788, y: 2.911816628737092, w: 0.8503613093178853, h: 1.085993438131686 }),
+      makeKey({ id: "x", label: "X", type: "char", x: 0, y: 0, w: 1.3413522300873288, h: 0.8589832175937914 }),
+      makeKey({ id: "y", label: "Y", type: "char", x: 4.750631022829091, y: 0, w: 0.8503613093178853, h: 0.9720964816260368 }),
+      makeKey({ id: "z", label: "Z", type: "char", x: 8.152076260100632, y: 0, w: 1.7007226186357707, h: 0.9709203751222835 }),
+      makeKey({ id: "space", label: "Space", type: "space", x: 3.900269713511205, y: 0.9837161629987522, w: 1.7007226186357707, h: 0.8625332837848602 }),
+      makeKey({ id: "backspace", label: "⌫", type: "backspace", x: 8.802232944848837, y: 1.8409198867552081, w: 1.6977670551511623, h: 1.379125530673299 }),
+    ],
   });
 
-  // Deterministic “random” permutation (hand-picked, fixed).
-  const randomFixed = compileRowLayout({
-    id: "rand",
-    name: "Random (fixed)",
-    rows: ["phqgiumeay", "lnofdxjkr", "cvstzwb"],
-    offsets: [0, 0.5, 1.5],
-    specialRowY: 3,
+  const prettyGood = finalizeLayout({
+    id: "pretty_good",
+    name: "Pretty Good",
+    keys: [
+      makeKey({ id: "a", label: "A", type: "char", x: 4.5375110564360055, y: 0.8, w: 2.106022601866128, h: 0.8 }),
+      makeKey({ id: "b", label: "B", type: "char", x: 6.643533658302133, y: 0, w: 1.675322843169103, h: 1.0741174756525689 }),
+      makeKey({ id: "c", label: "C", type: "char", x: 2.6565341641963007, y: 3.2, w: 1.197196573466351, h: 0.8 }),
+      makeKey({ id: "d", label: "D", type: "char", x: 6.643533658302133, y: 1.957729458725868, w: 1.4403964613932443, h: 0.8202924961748623 }),
+      makeKey({ id: "e", label: "E", type: "char", x: 3.853730737662652, y: 3.2, w: 2.106022601866128, h: 0.8 }),
+      makeKey({ id: "f", label: "F", type: "char", x: 1.053011300933064, y: 0, w: 1.3784771536368137, h: 1.6 }),
+      makeKey({ id: "g", label: "G", type: "char", x: 7.696544959235197, y: 1.0741174756525689, w: 1.6924159532538916, h: 0.8697703146007855 }),
+      makeKey({ id: "h", label: "H", type: "char", x: 2.4314884545698776, y: 0.8, w: 1.053011300933064, h: 0.8 }),
+      makeKey({ id: "i", label: "I", type: "char", x: 4.5375110564360055, y: 0, w: 2.106022601866128, h: 0.8 }),
+      makeKey({ id: "j", label: "J", type: "char", x: 9.38896091248909, y: 1.0741174756525689, w: 1.053011300933064, h: 0.8 }),
+      makeKey({ id: "k", label: "K", type: "char", x: 8.083930119695378, y: 1.957729458725868, w: 1.139162067945427, h: 0.8216482256718985 }),
+      makeKey({ id: "l", label: "L", type: "char", x: 1.053011300933064, y: 1.6, w: 1.3773966193336424, h: 1.0246235321125838 }),
+      makeKey({ id: "m", label: "M", type: "char", x: 1.053011300933064, y: 2.624623532112584, w: 1.6035228632632368, h: 1.3407413720670063 }),
+      makeKey({ id: "n", label: "N", type: "char", x: 5.59052235736907, y: 1.6, w: 1.053011300933064, h: 1.1980407465966512 }),
+      makeKey({ id: "o", label: "O", type: "char", x: 3.7095454651293642, y: 2.4000000000000004, w: 1.877661146631581, h: 0.8 }),
+      makeKey({ id: "p", label: "P", type: "char", x: 0, y: 0, w: 1.053011300933064, h: 1.5950325098072335 }),
+      makeKey({ id: "q", label: "Q", type: "char", x: 9.223092187640805, y: 2.946087022329049, w: 1.2769078123591941, h: 0.8769198695228726 }),
+      makeKey({ id: "r", label: "R", type: "char", x: 5.959753339528779, y: 2.7980407465966515, w: 1.053011300933064, h: 1.1836447802848207 }),
+      makeKey({ id: "s", label: "S", type: "char", x: 3.4844997555029416, y: 0.8, w: 1.053011300933064, h: 0.8 }),
+      makeKey({ id: "t", label: "T", type: "char", x: 2.4314884545698776, y: 0, w: 2.106022601866128, h: 0.8 }),
+      makeKey({ id: "u", label: "U", type: "char", x: 6.643533658302133, y: 1.0741174756525689, w: 1.053011300933064, h: 0.8836119830732992 }),
+      makeKey({ id: "v", label: "V", type: "char", x: 2.6565341641963007, y: 2.4000000000000004, w: 1.053011300933064, h: 0.8 }),
+      makeKey({ id: "w", label: "W", type: "char", x: 2.4314884545698776, y: 1.6, w: 1.053011300933064, h: 0.8 }),
+      makeKey({ id: "x", label: "X", type: "char", x: 8.318856501471236, y: 0, w: 1.053011300933064, h: 1.0425567255086488 }),
+      makeKey({ id: "y", label: "Y", type: "char", x: 7.012764640461843, y: 2.7980407465966515, w: 2.106022601866128, h: 1.0978357322946417 }),
+      makeKey({ id: "z", label: "Z", type: "char", x: 9.223092187640805, y: 1.9438877902533545, w: 1.053011300933064, h: 1.002199232075695 }),
+      makeKey({ id: "space", label: "Space", type: "space", x: 3.4844997555029416, y: 1.6, w: 2.106022601866128, h: 0.8 }),
+      makeKey({ id: "backspace", label: "⌫", type: "backspace", x: 9.38896091248909, y: 0, w: 1.053011300933064, h: 0.8073394862545854 }),
+    ],
   });
 
   // Canonical unit-space bounds for normalizing generated layouts.
@@ -437,16 +490,7 @@
     CANONICAL_TARGET
   );
 
-  const ALL_LAYOUTS = [
-    qwerty,
-    alphabetical,
-    randomFixed,
-    spIdentity,
-    spReverseB,
-    spMixed,
-    spRandomPermFixedSizes,
-    spRandomPermRandomSizes,
-  ];
+  const ALL_LAYOUTS = [qwerty, veryGood, prettyGood];
 
   // --- User-saved layouts (localStorage) ---
 
