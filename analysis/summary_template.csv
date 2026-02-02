@@ -1,0 +1,6 @@
+metric,value,note
+mean_wpm,,
+mean_edit_distance,,
+mean_error_rate,,
+mean_elapsed_seconds,,
+outlier_trials,,

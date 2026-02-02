@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>HCI Keyboard Layout Prototype</title>
     <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="styles-minimal.css" />
 
     <!-- No build tools: scripts execute in-order with defer. -->
     <script defer src="src/layouts.js"></script>
@@ -15,7 +16,7 @@
     <script defer src="src/keyboard.js"></script>
     <script defer src="src/app.js"></script>
   </head>
-  <body>
+  <body class="typingPage">
     <main class="container">
       <header class="header">
         <div>
@@ -26,90 +27,261 @@
         </div>
         <div class="buttons">
           <a class="btn btnSecondary" href="generator.html">Open generator</a>
+          <a class="btn btnSecondary" href="study.html">Study assets</a>
         </div>
       </header>
-
-      <section class="panel">
-        <h2 class="sectionTitle">Experiment</h2>
-        <div class="controls">
-          <div class="buttons">
-            <button id="experimentStartBtn" class="btn btnPrimary" type="button">Start experiment</button>
-            <button id="experimentStopBtn" class="btn btnDanger" type="button">Stop / Reset</button>
-            <button id="experimentSkipBtn" class="btn btnSecondary" type="button">Skip phase</button>
+      <div id="wizardContainer" class="wizardContainer">
+        <section class="panel wizardHeader">
+          <h2 class="sectionTitle">
+            <span class="infoInline">
+              Experiment
+              <span
+                class="infoIcon"
+                tabindex="0"
+                aria-label="Experiment controls and setup for running a session."
+                data-tip="Experiment controls and setup for running a session."
+                >i</span
+              >
+            </span>
+          </h2>
+          <div id="experimentStepper" class="stepper"></div>
+          <div class="progressBar" aria-label="Session progress">
+            <div id="experimentProgressFill" class="progressFill"></div>
           </div>
-          <div class="phraseText" style="min-width: 240px">
-            <div id="experimentStatus" class="hint">Idle.</div>
-          </div>
+          <div id="experimentProgressLabel" class="progressLabel"></div>
+          <div id="experimentSubstepLabel" class="hint wizardHidden"></div>
+          <div id="experimentLayoutStepper" class="stepper stepperDense wizardHidden"></div>
+          <div id="experimentTrialStepper" class="stepper stepperDense wizardHidden"></div>
+          <div id="experimentAction" class="callout" role="status" aria-live="polite"></div>
+          <div id="experimentStatus" class="hint wizardStatus">Idle.</div>
+        </section>
+
+        <div id="stageSetup" class="wizardStage">
+          <section class="panel">
+            <div class="wizardBlock">
+              <label class="field" style="min-width: 200px">
+                <span class="fieldLabel">
+                  <span class="infoInline">
+                    Participant ID
+                    <span
+                      class="infoIcon"
+                      tabindex="0"
+                      aria-label="Participant code stored in exports."
+                      data-tip="Participant code stored in exports."
+                      >i</span
+                    >
+                  </span>
+                </span>
+                <input id="experimentParticipantId" class="select" type="text" placeholder="e.g., P001" />
+              </label>
+              <div class="wizardActions">
+                <span class="infoInline">
+                  <button id="experimentStartBtn" class="btn btnPrimary" type="button">Start experiment</button>
+                  <span
+                    class="infoIcon"
+                    tabindex="0"
+                    aria-label="Starts a new session, locks settings, and resets results."
+                    data-tip="Starts a new session, locks settings, and resets results."
+                    >i</span
+                  >
+                </span>
+                <span class="infoInline wizardHidden">
+                  <button id="experimentStopBtn" class="btn btnDanger" type="button">Stop / Reset</button>
+                  <span
+                    class="infoIcon"
+                    tabindex="0"
+                    aria-label="Stops the session and unlocks settings. Results remain until cleared."
+                    data-tip="Stops the session and unlocks settings. Results remain until cleared."
+                    >i</span
+                  >
+                </span>
+                <span class="infoInline wizardHidden">
+                  <button id="experimentSkipBtn" class="btn btnSecondary" type="button">Skip phase</button>
+                  <span
+                    class="infoIcon"
+                    tabindex="0"
+                    aria-label="Skips remaining practice, or moves to the next layout."
+                    data-tip="Skips remaining practice, or moves to the next layout."
+                    >i</span
+                  >
+                </span>
+              </div>
+            </div>
+          </section>
         </div>
-      </section>
 
-      <section class="panel">
-        <div class="controls">
-          <label class="field">
-            <span class="fieldLabel">Layout</span>
-            <select id="layoutSelect" class="select"></select>
-          </label>
+        <div id="stageExperiment" class="wizardStage">
+          <section class="panel">
+            <div class="controls wizardControls">
+              <label class="field wizardHidden">
+                <span class="fieldLabel">
+                  <span class="infoInline">
+                    Layout
+                    <span
+                      class="infoIcon"
+                      tabindex="0"
+                      aria-label="Choose a layout for manual trials. Disabled during experiments."
+                      data-tip="Choose a layout for manual trials. Disabled during experiments."
+                      >i</span
+                    >
+                  </span>
+                </span>
+                <select id="layoutSelect" class="select"></select>
+              </label>
 
-          <div class="buttons">
-            <button id="resetTrialBtn" class="btn btnSecondary" type="button">Reset</button>
-            <button id="submitTrialBtn" class="btn btnPrimary" type="button">Submit phrase</button>
-            <button id="nextPhraseBtn" class="btn btnSecondary" type="button">Next phrase</button>
-          </div>
+              <div class="buttons">
+                <span class="infoInline wizardHidden">
+                  <button id="resetTrialBtn" class="btn btnSecondary" type="button">Reset</button>
+                  <span
+                    class="infoIcon"
+                    tabindex="0"
+                    aria-label="Clears the current typed text."
+                    data-tip="Clears the current typed text."
+                    >i</span
+                  >
+                </span>
+                <span class="infoInline wizardHidden">
+                  <button id="nextPhraseBtn" class="btn btnSecondary" type="button">Next phrase</button>
+                  <span
+                    class="infoIcon"
+                    tabindex="0"
+                    aria-label="Skips to a new phrase without saving results."
+                    data-tip="Skips to a new phrase without saving results."
+                    >i</span
+                  >
+                </span>
+              </div>
+            </div>
+
+            <div class="phrases">
+              <div class="phraseRow">
+                <div class="badge">Target</div>
+                <div id="targetPhrase" class="phraseText"></div>
+              </div>
+              <div class="phraseRow">
+                <div class="badge">Typed</div>
+                <div id="typedText" class="typedText" aria-live="polite"></div>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div id="keyboardContainer" class="keyboardContainer" aria-label="On-screen keyboard" tabindex="0"></div>
+          </section>
         </div>
 
-        <div class="phrases">
-          <div class="phraseRow">
-            <div class="badge">Target</div>
-            <div id="targetPhrase" class="phraseText"></div>
-          </div>
-          <div class="phraseRow">
-            <div class="badge">Typed</div>
-            <div id="typedText" class="typedText" aria-live="polite"></div>
-          </div>
+        <div id="stageResults" class="wizardStage">
+          <section class="panel">
+            <div class="exports">
+              <span class="infoInline">
+                <button id="downloadCsvBtn" class="btn btnPrimary" type="button">Download CSV</button>
+                <span
+                  class="infoIcon"
+                  tabindex="0"
+                  aria-label="CSV contains one row per trial with session metadata."
+                  data-tip="CSV contains one row per trial with session metadata."
+                  >i</span
+                >
+              </span>
+              <span class="infoInline">
+                <button id="downloadJsonBtn" class="btn btnSecondary" type="button">Download JSON (raw)</button>
+                <span
+                  class="infoIcon"
+                  tabindex="0"
+                  aria-label="JSON includes metadata and raw event logs."
+                  data-tip="JSON includes metadata and raw event logs."
+                  >i</span
+                >
+              </span>
+              <span class="infoInline">
+                <button id="sendSheetBtn" class="btn btnSecondary" type="button">Send to Google Sheets</button>
+                <span
+                  class="infoIcon"
+                  tabindex="0"
+                  aria-label="Sends trial rows to a Google Sheet via Apps Script."
+                  data-tip="Sends trial rows to a Google Sheet via Apps Script."
+                  >i</span
+                >
+              </span>
+              <span class="infoInline">
+                <button id="clearResultsBtn" class="btn btnDanger" type="button">Clear results</button>
+                <span
+                  class="infoIcon"
+                  tabindex="0"
+                  aria-label="Clears the results table and session trials."
+                  data-tip="Clears the results table and session trials."
+                  >i</span
+                >
+              </span>
+            </div>
+            <div id="sheetStatus" class="hint" aria-live="polite"></div>
+          </section>
+
+          <section class="panel">
+            <h2 class="sectionTitle">
+              <span class="infoInline">
+                Trial results
+                <span
+                  class="infoIcon"
+                  tabindex="0"
+                  aria-label="Submitted trials appear here. Practice trials are flagged."
+                  data-tip="Submitted trials appear here. Practice trials are flagged."
+                  >i</span
+                >
+              </span>
+            </h2>
+            <div class="tableWrap">
+              <table class="table">
+                <thead>
+                  <tr>
+                    <th>Trial</th>
+                    <th>Layout</th>
+                    <th>Phrase</th>
+                    <th>Practice</th>
+                    <th>WPM</th>
+                    <th>Edit distance</th>
+                    <th>Backspaces</th>
+                    <th>Elapsed (s)</th>
+                  </tr>
+                </thead>
+                <tbody id="resultsTableBody"></tbody>
+              </table>
+            </div>
+          </section>
         </div>
-      </section>
+      </div>
 
-      <section class="panel">
-        <div id="keyboardContainer" class="keyboardContainer" aria-label="On-screen keyboard"></div>
-      </section>
-
-      <section class="panel">
-        <div class="exports">
-          <button id="downloadCsvBtn" class="btn btnPrimary" type="button">Download CSV</button>
-          <button id="downloadJsonBtn" class="btn btnSecondary" type="button">Download JSON (raw)</button>
-          <button id="clearResultsBtn" class="btn btnDanger" type="button">Clear results</button>
-        </div>
-      </section>
-
-      <section class="panel">
-        <h2 class="sectionTitle">Trial results</h2>
-        <div class="tableWrap">
-          <table class="table">
-            <thead>
-              <tr>
-                <th>Trial</th>
-                <th>Layout</th>
-                <th>Phrase</th>
-                <th>WPM</th>
-                <th>Edit distance</th>
-                <th>Backspaces</th>
-                <th>Elapsed (s)</th>
-              </tr>
-            </thead>
-            <tbody id="resultsTableBody"></tbody>
-          </table>
-        </div>
-      </section>
-
-      <section class="panel">
-        <h2 class="sectionTitle">Theoretical estimate (linear distance)</h2>
+      <section class="panel wizardHidden">
+        <h2 class="sectionTitle">
+          <span class="infoInline">
+            Theoretical estimate (linear distance)
+            <span
+              class="infoIcon"
+              tabindex="0"
+              aria-label="Baseline prediction using a linear distance model."
+              data-tip="Baseline prediction using a linear distance model."
+              >i</span
+            >
+          </span>
+        </h2>
         <p class="hint">
           Simple baseline model: total time = tapTime + moveCost · distance per transition, averaged over the built-in
           phrase list.
         </p>
         <div class="controls" style="margin-top: 10px">
           <label class="field">
-            <span class="fieldLabel">Distance metric (theory)</span>
+            <span class="fieldLabel">
+              <span class="infoInline">
+                Distance metric (theory)
+                <span
+                  class="infoIcon"
+                  tabindex="0"
+                  aria-label="Controls which distances are used in the prediction."
+                  data-tip="Controls which distances are used in the prediction."
+                  >i</span
+                >
+              </span>
+            </span>
             <span style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap">
               <label style="display: inline-flex; gap: 8px; align-items: center">
                 <input id="theoryUseCenter" type="checkbox" />
@@ -137,12 +309,31 @@
         </div>
       </section>
 
-      <footer class="footer">
+      <footer class="footer wizardHidden">
         <p class="hint">
           Notes: This prototype intentionally avoids native text inputs to prevent mobile autocorrect/IME interference.
         </p>
       </footer>
     </main>
+    <div id="wizardModal" class="modalOverlay" hidden>
+      <div class="modalCard" role="dialog" aria-modal="true" aria-labelledby="wizardModalTitle">
+        <h3 id="wizardModalTitle" class="modalTitle">Welcome</h3>
+        <p id="wizardModalBody" class="hint"></p>
+        <div class="modalActions">
+          <button id="wizardModalContinue" class="btn btnPrimary" type="button">Continue</button>
+        </div>
+      </div>
+    </div>
+    <div id="practiceModal" class="modalOverlay" hidden>
+      <div class="modalCard" role="dialog" aria-modal="true" aria-labelledby="practiceModalTitle">
+        <h3 id="practiceModalTitle" class="modalTitle">Practice complete</h3>
+        <p class="hint">Would you like to run another practice round before main trials?</p>
+        <div class="modalActions">
+          <button id="practiceRepeatBtn" class="btn btnPrimary" type="button">Another practice round</button>
+          <button id="practiceContinueBtn" class="btn btnSecondary" type="button">Continue to main trials</button>
+        </div>
+      </div>
+    </div>
   </body>
 </html>
 

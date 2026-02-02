@@ -57,6 +57,48 @@
     ];
   }
 
+  function addEnterKeyToKeys(keys, options = {}) {
+    if (!Array.isArray(keys)) return keys;
+    if (keys.some((k) => k && k.id === "enter")) return keys;
+
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const k of keys) {
+      if (!k) continue;
+      const x = Number(k.x);
+      const y = Number(k.y);
+      const w = Number(k.w);
+      const h = Number(k.h);
+      if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(w) || !Number.isFinite(h)) continue;
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x + w);
+      maxY = Math.max(maxY, y + h);
+    }
+
+    if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) {
+      return keys;
+    }
+
+    const gap = Number.isFinite(options.gap) ? options.gap : 0.3;
+    const width = Number.isFinite(options.width) ? options.width : 2;
+    const height = Number.isFinite(options.height) ? options.height : Math.max(1, maxY - minY);
+
+    const enterKey = makeKey({
+      id: "enter",
+      label: "Enter",
+      x: maxX + gap,
+      y: minY,
+      w: width,
+      h: height,
+      type: "enter",
+    });
+
+    return keys.concat(enterKey);
+  }
+
   // Compiler seam: build a Layout from row strings + offsets.
   function compileRowLayout({ id, name, rows, offsets, specialRowY }) {
     const keys = [];
@@ -65,7 +107,7 @@
       keys.push(...buildLetterRow(rows[i], i, rowOffsets[i] ?? 0));
     }
     keys.push(...buildStandardSpecialKeys(specialRowY ?? rows.length));
-    return finalizeLayout({ id, name, keys });
+    return finalizeLayout({ id, name, keys: addEnterKeyToKeys(keys) });
   }
 
   function range1(n) {
@@ -319,7 +361,7 @@
   const veryGood = finalizeLayout({
     id: "very_good",
     name: "Very good",
-    keys: [
+    keys: addEnterKeyToKeys([
       makeKey({ id: "a", label: "A", type: "char", x: 1.3491857855575489, y: 1.9988058448867336, w: 1.7007226186357707, h: 0.8623351498632212 }),
       makeKey({ id: "b", label: "B", type: "char", x: 5.6009923321469754, y: 0, w: 0.8503613093178853, h: 0.970583418003457 }),
       makeKey({ id: "c", label: "C", type: "char", x: 7.101510326213068, y: 1.8409198867552081, w: 1.7007226186357707, h: 0.8511873447261947 }),
@@ -348,13 +390,13 @@
       makeKey({ id: "z", label: "Z", type: "char", x: 8.152076260100632, y: 0, w: 1.7007226186357707, h: 0.9709203751222835 }),
       makeKey({ id: "space", label: "Space", type: "space", x: 3.900269713511205, y: 0.9837161629987522, w: 1.7007226186357707, h: 0.8625332837848602 }),
       makeKey({ id: "backspace", label: "⌫", type: "backspace", x: 8.802232944848837, y: 1.8409198867552081, w: 1.6977670551511623, h: 1.379125530673299 }),
-    ],
+    ]),
   });
 
   const prettyGood = finalizeLayout({
     id: "pretty_good",
     name: "Pretty Good",
-    keys: [
+    keys: addEnterKeyToKeys([
       makeKey({ id: "a", label: "A", type: "char", x: 4.5375110564360055, y: 0.8, w: 2.106022601866128, h: 0.8 }),
       makeKey({ id: "b", label: "B", type: "char", x: 6.643533658302133, y: 0, w: 1.675322843169103, h: 1.0741174756525689 }),
       makeKey({ id: "c", label: "C", type: "char", x: 2.6565341641963007, y: 3.2, w: 1.197196573466351, h: 0.8 }),
@@ -383,7 +425,7 @@
       makeKey({ id: "z", label: "Z", type: "char", x: 9.223092187640805, y: 1.9438877902533545, w: 1.053011300933064, h: 1.002199232075695 }),
       makeKey({ id: "space", label: "Space", type: "space", x: 3.4844997555029416, y: 1.6, w: 2.106022601866128, h: 0.8 }),
       makeKey({ id: "backspace", label: "⌫", type: "backspace", x: 9.38896091248909, y: 0, w: 1.053011300933064, h: 0.8073394862545854 }),
-    ],
+    ]),
   });
 
   // Canonical unit-space bounds for normalizing generated layouts.
@@ -399,6 +441,7 @@
     }
     keys.push({ id: "space", label: "Space", type: "space" });
     keys.push({ id: "backspace", label: "⌫", type: "backspace" });
+    keys.push({ id: "enter", label: "Enter", type: "enter" });
     return keys;
   })();
 
@@ -589,7 +632,8 @@
     const id = String(layout?.id ?? "");
     if (!id) throw new Error("registerLayout(layout): layout.id is required");
     if (getLayoutById(id)) return getLayoutById(id);
-    const finalized = finalizeLayout({ id, name: String(layout?.name ?? id), keys: layout.keys });
+    const keysWithEnter = addEnterKeyToKeys(layout.keys);
+    const finalized = finalizeLayout({ id, name: String(layout?.name ?? id), keys: keysWithEnter });
     if (isUser) {
       finalized._user = true;
       finalized._createdAtMs = createdAtMs;

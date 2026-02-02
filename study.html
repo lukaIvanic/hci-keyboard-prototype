@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Study Assets</title>
+    <link rel="stylesheet" href="styles.css" />
+
+    <script defer src="vendor/fflate.min.js"></script>
+    <script defer src="src/studyTemplates.js"></script>
+    <script defer src="src/studyApp.js"></script>
+  </head>
+  <body>
+    <main class="container">
+      <header class="header">
+        <div>
+          <h1 class="title">Study Assets</h1>
+          <p class="subtitle">
+            Edit study materials, generate templates, and export a complete project package bundle.
+          </p>
+        </div>
+        <div class="buttons">
+          <span class="infoInline">
+            <a class="btn btnSecondary" href="index.html">Typing prototype</a>
+            <span
+              class="infoIcon"
+              tabindex="0"
+              aria-label="Return to the typing experiment page."
+              data-tip="Return to the typing experiment page."
+              >i</span
+            >
+          </span>
+          <span class="infoInline">
+            <a class="btn btnSecondary" href="generator.html">Generator</a>
+            <span
+              class="infoIcon"
+              tabindex="0"
+              aria-label="Open the layout generator."
+              data-tip="Open the layout generator."
+              >i</span
+            >
+          </span>
+        </div>
+      </header>
+
+      <section class="panel">
+        <h2 class="sectionTitle">Study progress</h2>
+        <div id="studyStepper" class="stepper"></div>
+        <div class="progressBar" aria-label="Study progress">
+          <div id="studyProgressFill" class="progressFill"></div>
+        </div>
+        <div id="studyProgressLabel" class="progressLabel"></div>
+        <div id="studyAction" class="callout" role="status" aria-live="polite"></div>
+      </section>
+
+      <section class="panel">
+        <h2 class="sectionTitle">Protocol flow</h2>
+        <p class="hint">Use these steps during a study session.</p>
+        <div id="protocolFlow" class="protocolFlow"></div>
+        <div class="studySection" style="margin-top: 10px">
+          <div class="studyTitle">Session notes</div>
+          <textarea id="sessionNotes" class="studyTextarea" rows="6" placeholder="Notes about this session..."></textarea>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2 class="sectionTitle">Analysis</h2>
+        <p class="hint">Import a CSV export to compute summaries and quality checks.</p>
+        <div class="studyGrid">
+          <label class="field">
+            <span class="fieldLabel">CSV file</span>
+            <input id="analysisFileInput" class="select" type="file" accept=".csv" />
+          </label>
+          <label class="field">
+            <span class="fieldLabel">Exclude practice</span>
+            <select id="analysisExcludePractice" class="select">
+              <option value="true" selected>Yes</option>
+              <option value="false">No</option>
+            </select>
+          </label>
+          <label class="field">
+            <span class="fieldLabel">Min trials per layout</span>
+            <input id="analysisMinTrials" class="select" type="number" min="1" max="50" step="1" value="5" />
+          </label>
+          <label class="field">
+            <span class="fieldLabel">Min elapsed (ms)</span>
+            <input id="analysisMinElapsed" class="select" type="number" min="0" step="100" value="2000" />
+          </label>
+          <label class="field">
+            <span class="fieldLabel">Max error rate</span>
+            <input id="analysisMaxErrorRate" class="select" type="number" min="0" max="1" step="0.01" value="0.4" />
+          </label>
+        </div>
+        <div class="studyButtons" style="margin-top: 10px">
+          <button id="runAnalysisBtn" class="btn btnPrimary" type="button">Run analysis</button>
+          <button id="downloadSummaryBtn" class="btn btnSecondary" type="button">Download summary CSV</button>
+          <button id="downloadReportSnippetBtn" class="btn btnSecondary" type="button">Download report snippet</button>
+        </div>
+        <div id="analysisStatus" class="hint" role="status" aria-live="polite"></div>
+        <div class="analysisGrid">
+          <div class="analysisCard">
+            <div class="studyTitle">Overall summary</div>
+            <div id="analysisSummary" class="analysisSummary"></div>
+          </div>
+          <div class="analysisCard">
+            <div class="studyTitle">Eligibility</div>
+            <div id="analysisEligibility" class="analysisSummary"></div>
+          </div>
+        </div>
+        <div class="analysisWarnings" id="analysisWarnings"></div>
+        <div class="tableWrap" style="margin-top: 10px">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Layout</th>
+                <th>Trials</th>
+                <th>Mean WPM</th>
+                <th>Mean edit distance</th>
+                <th>Error rate</th>
+                <th>Mean elapsed (s)</th>
+              </tr>
+            </thead>
+            <tbody id="analysisTableBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2 class="sectionTitle">Bundle export</h2>
+        <p class="hint">Download a zip containing protocol templates, analysis outputs, and QC report.</p>
+        <div class="studyButtons">
+          <button id="downloadBundleBtn" class="btn btnPrimary" type="button">Download bundle (zip)</button>
+          <div id="bundleStatus" class="hint" role="status" aria-live="polite"></div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2 class="sectionTitle">Study documents</h2>
+        <div id="studySections" class="studySections"></div>
+      </section>
+    </main>
+  </body>
+</html>

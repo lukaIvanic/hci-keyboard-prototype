@@ -5,8 +5,6 @@
   const ns = window.KbdStudy;
 
   const DISTANCE_MODE_STORAGE_KEY = "KbdStudy.distanceMode.v1";
-  const WORKER_SCRIPT = "src/gaWorker.js";
-  const WORKER_COUNT_STORAGE_KEY = "KbdStudy.workerCount.v1";
   const THEORY_PARAMS = { tapTimeMs: 140, fittsAms: 50, fittsBms: 100, eps: 1e-6, useCenter: true, useEdge: true };
 
   // Extra fitness shaping: penalize layouts that produce tiny keys after normalization.
@@ -36,10 +34,22 @@
 
   const INTEGER_SIZE_RANGE = { min: 1, max: 5 };
 
-  const LEADERBOARD = {
-    poolSize: 80,
-    // Prefer distinct layouts, but relax if we can't fill 5.
-    minDistThresholds: [0.45, 0.35, 0.25, 0.15, 0],
+  const ISLAND_DEFAULTS = {
+    initialCount: 10,
+    maxCount: 20,
+    spawnEvery: 10000,
+    minAgeEvals: 2000,
+  };
+
+  const ISLAND_LIMITS = {
+    initialMin: 1,
+    initialMax: 100,
+    maxMin: 1,
+    maxMax: 100,
+    spawnMin: 0,
+    spawnMax: 1000000,
+    minAgeMin: 0,
+    minAgeMax: 1000000,
   };
 
   const GA_DEFAULTS = {
@@ -55,10 +65,7 @@
 
   let gaLiveParams = { ...GA_DEFAULTS };
   let distanceMode = { useCenter: true, useEdge: true };
-  let workerPool = null;
-  let workerCount = 0;
   let batchInFlight = false;
-  let workerEvalId = 1;
 
   const cached = {
     keys: null,
@@ -66,15 +73,17 @@
     corpus: null,
   };
 
-  let ga = null;
-  let gaSizesMode = null; // "fixed" | "random"
+  let islandsMode = null; // "fixed" | "random" | "integer"
+  let nextIslandId = 1;
+  let islandSettings = { ...ISLAND_DEFAULTS };
   let lastGaStats = null;
 
   const state = {
     running: false,
     generatedTotal: 0,
     bestWpm: -Infinity,
-    pool: [], // larger candidate pool; top5 is derived from this with diversity constraints
+    islands: [],
+    nextSpawnAt: islandSettings.spawnEvery,
     top5: [],
     lastPreviewIndex: 0,
     fatalError: null,
@@ -145,37 +154,6 @@
     return "edge";
   }
 
-  function getAutoWorkerCount() {
-    const cores = Number(navigator.hardwareConcurrency || 0);
-    if (!Number.isFinite(cores) || cores <= 1) return 1;
-    return Math.max(1, cores - 1);
-  }
-
-  function loadWorkerCountSetting() {
-    try {
-      const raw = localStorage.getItem(WORKER_COUNT_STORAGE_KEY);
-      if (!raw) return "auto";
-      const parsed = JSON.parse(raw);
-      return typeof parsed === "string" ? parsed : "auto";
-    } catch {
-      return "auto";
-    }
-  }
-
-  function saveWorkerCountSetting(value) {
-    try {
-      localStorage.setItem(WORKER_COUNT_STORAGE_KEY, JSON.stringify(String(value)));
-    } catch {
-      // ignore
-    }
-  }
-
-  function resolveWorkerCount(value) {
-    if (value === "auto") return getAutoWorkerCount();
-    const n = Number.parseInt(String(value), 10);
-    return Number.isInteger(n) && n > 0 ? n : getAutoWorkerCount();
-  }
-
   function syncGaUiFromParams(params) {
     // Sliders
     $("gaMutationRate").value = String(params.mutationRate);
@@ -209,10 +187,65 @@
     };
   }
 
+  function normalizeIslandSettings(input) {
+    const initialCount = clampInt(
+      parseIntOr(input?.initialCount, ISLAND_DEFAULTS.initialCount),
+      ISLAND_LIMITS.initialMin,
+      ISLAND_LIMITS.initialMax
+    );
+    let maxCount = clampInt(
+      parseIntOr(input?.maxCount, ISLAND_DEFAULTS.maxCount),
+      ISLAND_LIMITS.maxMin,
+      ISLAND_LIMITS.maxMax
+    );
+    if (maxCount < initialCount) maxCount = initialCount;
+    const spawnEvery = clampInt(
+      parseIntOr(input?.spawnEvery, ISLAND_DEFAULTS.spawnEvery),
+      ISLAND_LIMITS.spawnMin,
+      ISLAND_LIMITS.spawnMax
+    );
+    const minAgeEvals = clampInt(
+      parseIntOr(input?.minAgeEvals, ISLAND_DEFAULTS.minAgeEvals),
+      ISLAND_LIMITS.minAgeMin,
+      ISLAND_LIMITS.minAgeMax
+    );
+    return { initialCount, maxCount, spawnEvery, minAgeEvals };
+  }
+
+  function syncIslandUiFromSettings(settings) {
+    const next = normalizeIslandSettings(settings);
+    $("islandInitialCount").value = String(next.initialCount);
+    $("islandMaxCount").value = String(next.maxCount);
+    $("islandSpawnEvery").value = String(next.spawnEvery);
+    $("islandMinAgeEvals").value = String(next.minAgeEvals);
+  }
+
+  function readIslandUiParams() {
+    return {
+      initialCount: parseIntOr($("islandInitialCount").value, ISLAND_DEFAULTS.initialCount),
+      maxCount: parseIntOr($("islandMaxCount").value, ISLAND_DEFAULTS.maxCount),
+      spawnEvery: parseIntOr($("islandSpawnEvery").value, ISLAND_DEFAULTS.spawnEvery),
+      minAgeEvals: parseIntOr($("islandMinAgeEvals").value, ISLAND_DEFAULTS.minAgeEvals),
+    };
+  }
+
+  function applyIslandParamsFromUi() {
+    const wasRunning = state.running;
+    islandSettings = normalizeIslandSettings(readIslandUiParams());
+    syncIslandUiFromSettings(islandSettings);
+    clearAll();
+    if (wasRunning) setRunning(true);
+  }
+
   function applyGaParamsFromUi() {
     gaLiveParams = readGaUiParams();
     syncGaUiFromParams(gaLiveParams);
-    if (ga && typeof ga.setParams === "function") ga.setParams(gaLiveParams);
+    if (state.islands.length) {
+      for (const island of state.islands) {
+        if (island?.ga && typeof island.ga.setParams === "function") island.ga.setParams(gaLiveParams);
+      }
+      lastGaStats = aggregateIslandStats();
+    }
     updateStatus();
   }
 
@@ -222,8 +255,10 @@
   }
 
   function resetSearch() {
-    ga = null;
-    gaSizesMode = null;
+    state.islands = [];
+    state.nextSpawnAt = islandSettings.spawnEvery;
+    islandsMode = null;
+    nextIslandId = 1;
     lastGaStats = null;
   }
 
@@ -242,14 +277,17 @@
     return cached.corpus;
   }
 
-  function ensureGa(sizesMode) {
-    const mode = sizesMode === "integer" ? "integer" : sizesMode === "random" ? "random" : "fixed";
-    if (ga && gaSizesMode === mode) return;
+  function normalizeSizesMode(sizesMode) {
+    return sizesMode === "integer" ? "integer" : sizesMode === "random" ? "random" : "fixed";
+  }
+
+  function createIsland(sizesMode) {
+    const mode = normalizeSizesMode(sizesMode);
     const includeSizes = mode !== "fixed";
     const sizeMin = mode === "integer" ? INTEGER_SIZE_RANGE.min : SEARCH_PARAMS.sizeMin;
     const sizeMax = mode === "integer" ? INTEGER_SIZE_RANGE.max : SEARCH_PARAMS.sizeMax;
     const keys = getDefaultKeys();
-    ga = ns.geneticSearch.createSequencePairGA({
+    const ga = ns.geneticSearch.createSequencePairGA({
       n: keys.length,
       includeSizes,
       sizeMin,
@@ -261,12 +299,92 @@
       mutationRate: gaLiveParams.mutationRate,
       sizeMutationRate: gaLiveParams.sizeMutationRate,
       immigrantRate: gaLiveParams.immigrantRate,
-      maxCacheSize: SEARCH_PARAMS.maxCacheSize,
+      maxCacheSize: 0,
       replacementStrategy: gaLiveParams.replacementStrategy,
       rtrWindow: gaLiveParams.rtrWindow,
     });
-    gaSizesMode = mode;
+    const createdAt = state.generatedTotal;
+    return {
+      id: nextIslandId++,
+      ga,
+      sizesMode: mode,
+      bestEntry: null,
+      generatedTotal: 0,
+      createdAt,
+      lastImprovementAt: createdAt,
+    };
+  }
+
+  function ensureIslands(sizesMode) {
+    const mode = normalizeSizesMode(sizesMode);
+    if (state.islands.length && islandsMode === mode) return;
+    islandsMode = mode;
+    state.islands = [];
+    nextIslandId = 1;
+    state.nextSpawnAt = state.generatedTotal + islandSettings.spawnEvery;
+    for (let i = 0; i < islandSettings.initialCount; i++) {
+      state.islands.push(createIsland(mode));
+    }
     lastGaStats = null;
+  }
+
+  function spawnIslandIfNeeded(sizesMode) {
+    if (islandSettings.maxCount <= 1) return;
+    if (!Number.isFinite(islandSettings.spawnEvery) || islandSettings.spawnEvery <= 0) return;
+    if (!state.islands.length) return;
+    while (state.generatedTotal >= state.nextSpawnAt) {
+      state.islands.push(createIsland(sizesMode));
+      state.nextSpawnAt += islandSettings.spawnEvery;
+    }
+  }
+
+  function islandBestScore(island) {
+    const score = island?.bestEntry?.predictedWpm;
+    return Number.isFinite(score) ? score : -Infinity;
+  }
+
+  function pruneIslandsIfNeeded() {
+    if (state.islands.length <= islandSettings.maxCount) return;
+    const minAge = Math.max(0, Number(islandSettings.minAgeEvals) || 0);
+    while (state.islands.length > islandSettings.maxCount) {
+      const now = state.generatedTotal;
+      let candidates = state.islands.filter((island) => now - island.createdAt >= minAge);
+      if (!candidates.length) candidates = state.islands;
+
+      let worst = candidates[0];
+      let worstScore = islandBestScore(worst);
+      for (let i = 1; i < candidates.length; i++) {
+        const cand = candidates[i];
+        const candScore = islandBestScore(cand);
+        if (candScore < worstScore || (candScore === worstScore && cand.createdAt < worst.createdAt)) {
+          worst = cand;
+          worstScore = candScore;
+        }
+      }
+      state.islands = state.islands.filter((island) => island !== worst);
+    }
+    recomputeBestWpm();
+  }
+
+  function aggregateIslandStats() {
+    const stats = { evaluations: 0, populationSize: 0, cacheSize: 0, islands: state.islands.length };
+    for (const island of state.islands) {
+      const islandStats = island?.ga?.getStats ? island.ga.getStats() : null;
+      if (!islandStats) continue;
+      stats.evaluations += islandStats.evaluations || 0;
+      stats.populationSize += islandStats.populationSize || 0;
+      stats.cacheSize += islandStats.cacheSize || 0;
+    }
+    return stats;
+  }
+
+  function recomputeBestWpm() {
+    let best = -Infinity;
+    for (const island of state.islands) {
+      const score = island?.bestEntry?.predictedWpm;
+      if (Number.isFinite(score) && score > best) best = score;
+    }
+    state.bestWpm = best;
   }
 
   function clampInt(x, min, max) {
@@ -322,64 +440,9 @@
     return out;
   }
 
-  function terminateWorkerPool() {
-    if (!workerPool) return;
-    for (const w of workerPool.workers) w.terminate();
-    workerPool = null;
-    workerCount = 0;
-  }
-
-  function createWorkerPool(count, keys, target) {
-    const workers = [];
-    for (let i = 0; i < count; i++) {
-      try {
-        const w = new Worker(WORKER_SCRIPT);
-        w.postMessage({ type: "init", keys, target, sizePenalty: KEY_SIZE_PENALTY });
-        workers.push(w);
-      } catch (err) {
-        console.warn("Worker init failed; falling back to local eval.", err);
-        for (const wk of workers) wk.terminate();
-        return null;
-      }
-    }
-
-    return {
-      workers,
-      count: workers.length,
-      evaluate(genomes, sizesMode, theoryParams) {
-        if (!workers.length) return Promise.resolve(evaluateGenomesLocal(genomes, sizesMode, target));
-
-        const chunks = [];
-        const chunkSize = Math.ceil(genomes.length / workers.length);
-        for (let i = 0; i < workers.length; i++) {
-          const start = i * chunkSize;
-          const end = Math.min(genomes.length, start + chunkSize);
-          chunks.push(genomes.slice(start, end));
-        }
-
-        const tasks = workers.map((w, idx) => {
-          const chunk = chunks[idx] || [];
-          if (!chunk.length) return Promise.resolve([]);
-          const id = workerEvalId++;
-          return new Promise((resolve) => {
-            const onMessage = (evt) => {
-              const payload = evt?.data;
-              if (!payload || payload.id !== id) return;
-              w.removeEventListener("message", onMessage);
-              resolve(Array.isArray(payload.evaluations) ? payload.evaluations : []);
-            };
-            w.addEventListener("message", onMessage);
-            w.postMessage({ type: "evaluate", id, genomes: chunk, sizesMode, theoryParams });
-          });
-        });
-
-        return Promise.all(tasks).then((parts) => parts.flat());
-      },
-    };
-  }
 
   function makeDefaultKeys() {
-    // a..z, space, backspace (extensible later)
+    // a..z, space, backspace, enter (extensible later)
     const keys = [];
     for (let c = 97; c <= 122; c++) {
       const ch = String.fromCharCode(c);
@@ -387,6 +450,7 @@
     }
     keys.push({ id: "space", label: "Space", type: "space" });
     keys.push({ id: "backspace", label: "⌫", type: "backspace" });
+    keys.push({ id: "enter", label: "Enter", type: "enter" });
     return keys;
   }
 
@@ -394,6 +458,68 @@
     const q = ns.layouts.getLayoutById("qwerty");
     const b = ns.layouts.getLayoutBounds(q);
     return { targetW: b.width, targetH: b.height };
+  }
+
+  function formatCorpusChar(ch) {
+    if (ch === " ") return "_";
+    if (ch === "\n") return "↵";
+    return ch;
+  }
+
+  function formatAlphabet(alphabet) {
+    return String(alphabet ?? "")
+      .split("")
+      .map((ch) => formatCorpusChar(ch))
+      .join("");
+  }
+
+  function augmentCorpusWithEnter(corpus) {
+    if (!corpus || corpus._augmented) return corpus;
+    const alphabet = String(corpus.alphabet ?? "");
+    if (!alphabet || alphabet.includes("\n")) return corpus;
+    if (!Array.isArray(corpus.countsFlat)) return corpus;
+
+    const spaceIdx = alphabet.indexOf(" ");
+    if (spaceIdx < 0) return corpus;
+
+    const K = alphabet.length;
+    const countsFlat = corpus.countsFlat;
+    if (K * K !== countsFlat.length) return corpus;
+
+    const newAlphabet = `${alphabet}\n`;
+    const newK = K + 1;
+    const newCounts = new Array(newK * newK).fill(0);
+
+    for (let a = 0; a < K; a++) {
+      for (let b = 0; b < K; b++) {
+        newCounts[a * newK + b] = countsFlat[a * K + b] || 0;
+      }
+    }
+
+    const scale = 0.2;
+    let addedTotal = 0;
+    for (let a = 0; a < K; a++) {
+      const c = countsFlat[a * K + spaceIdx] || 0;
+      if (c <= 0) continue;
+      const add = c * scale;
+      newCounts[a * newK + (newK - 1)] += add;
+      addedTotal += add;
+    }
+    for (let b = 0; b < K; b++) {
+      const c = countsFlat[spaceIdx * K + b] || 0;
+      if (c <= 0) continue;
+      const add = c * scale;
+      newCounts[(newK - 1) * newK + b] += add;
+      addedTotal += add;
+    }
+
+    return {
+      ...corpus,
+      alphabet: newAlphabet,
+      countsFlat: newCounts,
+      totalBigrams: Number(corpus.totalBigrams ?? 0) + addedTotal,
+      _augmented: true,
+    };
   }
 
   function requireGutenbergCorpus() {
@@ -406,7 +532,7 @@
     if (!ns.theory?.distanceLinear?.estimateLayoutFromBigramCountsFitts) {
       throw new Error("Missing scorer: ns.theory.distanceLinear.estimateLayoutFromBigramCountsFitts");
     }
-    return corpus;
+    return augmentCorpusWithEnter(corpus);
   }
 
   function scoreLayout(layout) {
@@ -430,71 +556,23 @@
     return { predictedWpm, avgMsPerChar, minKeyDim: minDim, sizePenaltyMs: penaltyMs };
   }
 
-  function layoutDistance(a, b) {
-    // Average distance between corresponding keys (unit-space), using the same distance metric toggles as scoring.
-    // Layouts are normalized to canonical bounds, so this is comparable across candidates.
-    let sum = 0;
-    let count = 0;
-    for (const k of a.keys) {
-      const ka = ns.layouts.getKey(a, k.id);
-      const kb = ns.layouts.getKey(b, k.id);
-      if (!ka || !kb) continue;
-
-      let d = null;
-      if (distanceMode.useCenter && distanceMode.useEdge) d = ns.layouts.mixedDistance(ka, kb);
-      else if (distanceMode.useCenter) d = ns.layouts.centerDistance(ka, kb);
-      else if (distanceMode.useEdge) d = ns.layouts.rectDistance(ka, kb);
-      if (d == null) continue;
-
-      sum += d;
-      count += 1;
-    }
-    return count > 0 ? sum / count : Infinity;
-  }
-
-  function insertTop5(entry) {
-    const items = state.pool.slice();
-    items.push(entry);
+  function rebuildLeaderboardFromIslands() {
+    const items = state.islands.map((island) => island.bestEntry).filter(Boolean);
     items.sort((a, b) => b.predictedWpm - a.predictedWpm);
-
-    // Maintain a larger pool of high-scoring candidates, de-duplicated by layout signature.
-    const pool = [];
-    const seen = new Set();
-    for (const it of items) {
-      const sig = `${it.sizesMode}|${it.signature}`;
-      if (seen.has(sig)) continue;
-      seen.add(sig);
-      pool.push(it);
-      if (pool.length >= LEADERBOARD.poolSize) break;
-    }
-    state.pool = pool;
-
-    // Pick a diverse top-5 from the pool (greedy by predicted WPM, with relaxed thresholds fallback).
-    const selected = [];
-    const selectedSigs = new Set();
-    for (const threshold of LEADERBOARD.minDistThresholds) {
-      for (const it of state.pool) {
-        if (selected.length >= 5) break;
-        const sig = `${it.sizesMode}|${it.signature}`;
-        if (selectedSigs.has(sig)) continue;
-        let ok = true;
-        for (const chosen of selected) {
-          if (layoutDistance(it.layout, chosen.layout) < threshold) {
-            ok = false;
-            break;
-          }
-        }
-        if (!ok) continue;
-        selectedSigs.add(sig);
-        selected.push(it);
-      }
-      if (selected.length >= 5) break;
-    }
+    const selected = items.slice(0, 5);
 
     const prev = state.top5;
     const changed =
       selected.length !== prev.length ||
-      selected.some((it, idx) => !prev[idx] || prev[idx].signature !== it.signature || prev[idx].sizesMode !== it.sizesMode);
+      selected.some((it, idx) => {
+        const prevIt = prev[idx];
+        return (
+          !prevIt ||
+          prevIt.signature !== it.signature ||
+          prevIt.sizesMode !== it.sizesMode ||
+          prevIt.islandId !== it.islandId
+        );
+      });
     if (changed) state.top5 = selected;
     return changed;
   }
@@ -552,6 +630,7 @@
 
       const cells = [
         idx + 1,
+        it.islandId ?? "—",
         ns.metrics.roundTo(it.predictedWpm, 2),
         ns.metrics.roundTo(it.avgMsPerChar, 1),
         it.sizesMode,
@@ -595,14 +674,15 @@
 
     const scoring = `Scoring: Gutenberg bigrams (pg${corpus.bookId}) + Fitts (dist=${distanceModeLabel(distanceMode)})`;
     const search = "Search: genetic algorithm (sequence-pair)";
+    const islandInfo = `Islands: ${state.islands.length}/${islandSettings.maxCount} (init ${islandSettings.initialCount}) • Spawn: ${islandSettings.spawnEvery.toLocaleString()} • MinAge: ${islandSettings.minAgeEvals.toLocaleString()} • Batch/island: ${SEARCH_PARAMS.batchSize}`;
     const gaExtra = lastGaStats
-      ? ` • GA pop: ${lastGaStats.populationSize.toLocaleString()} • Cache: ${lastGaStats.cacheSize.toLocaleString()} • mut=${ns.metrics.roundTo(
+      ? ` • ${islandInfo} • GA pop: ${lastGaStats.populationSize.toLocaleString()} • Cache: ${lastGaStats.cacheSize.toLocaleString()} • mut=${ns.metrics.roundTo(
           gaLiveParams.mutationRate,
           2
         )} imm=${ns.metrics.roundTo(gaLiveParams.immigrantRate, 2)} k=${gaLiveParams.tournamentK} elite=${gaLiveParams.eliteCount} rtr=${
           gaLiveParams.rtrWindow
-        } • Workers: ${workerCount}`
-      : "";
+        }`
+      : ` • ${islandInfo}`;
 
     setText(
       $("statusDetails"),
@@ -613,8 +693,12 @@
   }
 
   function renderCorpusPanel() {
-    const corpus = requireGutenbergCorpus();
-    const meta = `Loaded: Project Gutenberg pg${corpus.bookId} • Alphabet: "${corpus.alphabet}" • Total bigrams: ${corpus.totalBigrams.toLocaleString()} • Generated: ${corpus.generatedAt ?? "—"}`;
+    const corpus = getCorpusCached();
+    const meta = `Loaded: Project Gutenberg pg${corpus.bookId} • Alphabet: "${formatAlphabet(
+      corpus.alphabet
+    )}" • Total bigrams: ${ns.metrics.roundTo(corpus.totalBigrams, 0).toLocaleString()} • Generated: ${
+      corpus.generatedAt ?? "—"
+    }`;
     setText($("corpusMeta"), meta);
 
     // Top 60 bigrams by count
@@ -637,7 +721,7 @@
     for (let r = 0; r < Math.min(topN, items.length); r++) {
       const it = items[r];
       const tr = document.createElement("tr");
-      const bigram = `${it.a === " " ? "_" : it.a}${it.b === " " ? "_" : it.b}`;
+      const bigram = `${formatCorpusChar(it.a)}${formatCorpusChar(it.b)}`;
       const pct = (it.count / corpus.totalBigrams) * 100;
 
       const cells = [r + 1, bigram, it.count.toLocaleString(), `${ns.metrics.roundTo(pct, 2)}%`];
@@ -668,7 +752,6 @@
     resetSearch();
     state.generatedTotal = 0;
     state.bestWpm = -Infinity;
-    state.pool = [];
     state.top5 = [];
     state.lastPreviewIndex = 0;
     state.fatalError = null;
@@ -684,46 +767,50 @@
     batchInFlight = true;
     try {
       const sizesMode = String($("sizeModeSelect").value ?? "fixed");
-      ensureGa(sizesMode);
+      ensureIslands(sizesMode);
       const target = getCanonicalTarget();
       const batchSize = SEARCH_PARAMS.batchSize;
-
-      const { genomes } = ga.generateGenomes(batchSize);
-      const evals = workerPool
-        ? await workerPool.evaluate(genomes, sizesMode, THEORY_PARAMS)
-        : evaluateGenomesLocal(genomes, sizesMode, target);
-
-      const { evaluations, stats } = ga.ingestEvaluations(evals);
-      lastGaStats = stats;
-
-      let leaderboardChanged = false;
-      for (const ev of evaluations) {
-        const predictedWpm = ev.predictedWpm;
-        const avgMsPerChar = ev.avgMsPerChar;
-        const layout = ev.layout;
-
-        state.generatedTotal += 1;
-        if (predictedWpm > state.bestWpm) state.bestWpm = predictedWpm;
-
-        // Only consider entries that can affect the candidate pool.
-        const worstPool = state.pool.length < LEADERBOARD.poolSize ? -Infinity : state.pool[state.pool.length - 1].predictedWpm;
-        if (predictedWpm <= worstPool) continue;
-
-        const entry = {
-          predictedWpm,
-          avgMsPerChar,
-          sizesMode,
-          generatedAt: nowTimeString(),
-          layout,
-          signature: signatureOfLayout(layout),
-        };
-
-        if (insertTop5(entry)) leaderboardChanged = true;
+      const islands = state.islands;
+      if (!islands.length) {
+        updateStatus();
+        return;
       }
 
+      for (let i = 0; i < islands.length; i++) {
+        const count = batchSize;
+        const island = islands[i];
+        const { genomes } = island.ga.generateGenomes(count);
+        const evals = evaluateGenomesLocal(genomes, sizesMode, target);
+        const { evaluations } = island.ga.ingestEvaluations(evals);
+
+        for (const ev of evaluations) {
+          const predictedWpm = ev.predictedWpm;
+          state.generatedTotal += 1;
+          island.generatedTotal += 1;
+
+          if (predictedWpm > state.bestWpm) state.bestWpm = predictedWpm;
+          if (!island.bestEntry || predictedWpm > island.bestEntry.predictedWpm) {
+            island.bestEntry = {
+              predictedWpm,
+              avgMsPerChar: ev.avgMsPerChar,
+              sizesMode,
+              generatedAt: nowTimeString(),
+              layout: ev.layout,
+              signature: signatureOfLayout(ev.layout),
+              islandId: island.id,
+            };
+            island.lastImprovementAt = state.generatedTotal;
+          }
+        }
+      }
+
+      spawnIslandIfNeeded(sizesMode);
+      pruneIslandsIfNeeded();
+      lastGaStats = aggregateIslandStats();
+
+      const leaderboardChanged = rebuildLeaderboardFromIslands();
       if (leaderboardChanged) {
         renderLeaderboard();
-        // Auto-preview best entry if none yet, or keep current preview selection.
         const idx = Math.min(state.lastPreviewIndex, state.top5.length - 1);
         if (state.top5[idx]) renderPreview(state.top5[idx].layout);
       }
@@ -754,29 +841,6 @@
     $("distUseCenter").checked = distanceMode.useCenter;
     $("distUseEdge").checked = distanceMode.useEdge;
 
-    // Worker controls (persisted).
-    const workerSelect = $("workerCountSelect");
-    const savedWorker = loadWorkerCountSetting();
-    if ([...workerSelect.options].some((opt) => opt.value === savedWorker)) {
-      workerSelect.value = savedWorker;
-    } else {
-      workerSelect.value = "auto";
-    }
-
-    const applyWorkerSetting = () => {
-      const wasRunning = state.running;
-      const setting = workerSelect.value;
-      saveWorkerCountSetting(setting);
-      terminateWorkerPool();
-      workerCount = resolveWorkerCount(setting);
-      workerPool = createWorkerPool(workerCount, getDefaultKeys(), getCanonicalTarget());
-      workerCount = workerPool ? workerPool.count : 0;
-      if (!workerPool) workerSelect.disabled = true;
-      clearAll();
-      if (wasRunning && workerPool) setRunning(true);
-    };
-    applyWorkerSetting();
-
     clearAll();
 
     // Hard requirement: corpus must exist; show a fatal error if not.
@@ -790,7 +854,6 @@
       console.error(err);
       $("startStopBtn").disabled = true;
       $("sizeModeSelect").disabled = true;
-      $("workerCountSelect").disabled = true;
       updateStatus();
     }
 
@@ -800,7 +863,6 @@
       // No auto-restart; the user can stop/start to compare.
       clearAll();
     });
-    $("workerCountSelect").addEventListener("change", applyWorkerSetting);
 
     const onDistanceControl = (e) => {
       const wasRunning = state.running;
@@ -816,7 +878,7 @@
       applyDistanceMode({ useCenter: centerEl.checked, useEdge: edgeEl.checked });
       saveDistanceMode(distanceMode);
 
-      // Scoring changed; restart to avoid mixing caches/pool entries.
+      // Scoring changed; restart to avoid mixing cached island evaluations.
       clearAll();
       if (wasRunning) setRunning(true);
     };
@@ -833,6 +895,14 @@
     $("gaTournamentK").addEventListener("change", onGaControl);
     $("gaEliteCount").addEventListener("change", onGaControl);
     $("gaRtrWindow").addEventListener("change", onGaControl);
+
+    // Island controls
+    syncIslandUiFromSettings(islandSettings);
+    const onIslandControl = () => applyIslandParamsFromUi();
+    $("islandInitialCount").addEventListener("change", onIslandControl);
+    $("islandMaxCount").addEventListener("change", onIslandControl);
+    $("islandSpawnEvery").addEventListener("change", onIslandControl);
+    $("islandMinAgeEvals").addEventListener("change", onIslandControl);
 
     // Save layout to main typing page (localStorage-backed)
     $("saveLayoutBtn").addEventListener("click", () => {

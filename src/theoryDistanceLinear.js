@@ -21,11 +21,18 @@
 
   function charToKeyId(ch) {
     if (ch === " ") return "space";
+    if (ch === "\n") return "enter";
     const lower = String(ch).toLowerCase();
     if (lower.length !== 1) return null;
     const code = lower.charCodeAt(0);
     if (code >= 97 && code <= 122) return lower; // a-z
     return null;
+  }
+
+  function corpusCharToKeyId(ch) {
+    if (ch === " ") return "space";
+    if (ch === "\n") return "enter";
+    return String(ch ?? "");
   }
 
   /**
@@ -109,7 +116,7 @@
     const keys = new Array(K);
     for (let i = 0; i < K; i++) {
       const ch = alphabet[i];
-      const keyId = ch === " " ? "space" : ch;
+      const keyId = corpusCharToKeyId(ch);
       keys[i] = ns.layouts.getKey(layout, keyId);
     }
 
@@ -186,7 +193,7 @@
     const centers = new Array(K);
     for (let i = 0; i < K; i++) {
       const ch = alphabet[i];
-      const keyId = ch === " " ? "space" : ch;
+      const keyId = corpusCharToKeyId(ch);
       const k = ns.layouts.getKey(layout, keyId);
       keys[i] = k;
       centers[i] = k ? { cx: k.x + k.w / 2, cy: k.y + k.h / 2 } : null;

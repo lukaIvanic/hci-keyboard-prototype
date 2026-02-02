@@ -12,6 +12,11 @@
 - **Theoretical model**: simple linear distance estimate shown per layout.
 - **Generator page**: live **genetic algorithm** sequence-pair search scored by theoretical WPM; keeps a top-5 leaderboard with preview. It uses a **Gutenberg-derived bigram distribution** (letters + space) and a **Fitts’ Law** movement-time model for scoring.
 
+### Experiment workflow
+- **Setup**: enter participant ID/condition, choose layout order (fixed or seeded random), set practice and trials per layout.
+- **Run**: click Start; controls lock, the status shows layout and trial progress, and practice trials are flagged.
+- **Finish**: export CSV or JSON; JSON includes session metadata, layout order + seed, and environment info for reproducibility.
+
 ### File map
 - `index.html`: UI shell and script loading order.
 - `generator.html`: live layout generator page (top-5 leaderboard + preview).

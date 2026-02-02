@@ -27,19 +27,67 @@
           </p>
         </div>
         <div class="buttons">
-          <a class="btn btnSecondary" href="index.html">Back to typing prototype</a>
+          <span class="infoInline">
+            <a class="btn btnSecondary" href="index.html">Back to typing prototype</a>
+            <span
+              class="infoIcon"
+              tabindex="0"
+              aria-label="Returns to the typing experiment page."
+              data-tip="Returns to the typing experiment page."
+              >i</span
+            >
+          </span>
+          <span class="infoInline">
+            <a class="btn btnSecondary" href="study.html">Study assets</a>
+            <span
+              class="infoIcon"
+              tabindex="0"
+              aria-label="Open the study assets hub."
+              data-tip="Open the study assets hub."
+              >i</span
+            >
+          </span>
         </div>
       </header>
 
       <section class="panel">
         <div class="controls">
           <div class="buttons">
-            <button id="startStopBtn" class="btn btnPrimary" type="button">Start</button>
-            <button id="resetBtn" class="btn btnDanger" type="button">Reset</button>
+            <span class="infoInline">
+              <button id="startStopBtn" class="btn btnPrimary" type="button">Start</button>
+              <span
+                class="infoIcon"
+                tabindex="0"
+                aria-label="Start begins continuous search; click again to stop."
+                data-tip="Start begins continuous search; click again to stop."
+                >i</span
+              >
+            </span>
+            <span class="infoInline">
+              <button id="resetBtn" class="btn btnDanger" type="button">Reset</button>
+              <span
+                class="infoIcon"
+                tabindex="0"
+                aria-label="Reset clears the candidate pool and statistics."
+                data-tip="Reset clears the candidate pool and statistics."
+                >i</span
+              >
+            </span>
           </div>
 
           <label class="field">
-            <span class="fieldLabel">Generation options</span>
+            <span class="fieldLabel">
+              <span class="infoInline">
+                Generation options
+                <span
+                  class="infoIcon"
+                  tabindex="0"
+                  aria-label="Controls key sizing mode during generation."
+                  data-tip="Controls key sizing mode during generation."
+                  >i</span
+                >
+              </span>
+            </span>
             <span style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap">
               <label style="display: inline-flex; gap: 8px; align-items: center">
                 <span style="font-size: 13px; color: var(--text)">Key sizes</span>
@@ -49,23 +97,23 @@
                   <option value="integer">Integer (1–5)</option>
                 </select>
               </label>
-              <label style="display: inline-flex; gap: 8px; align-items: center">
-                <span style="font-size: 13px; color: var(--text)">Workers</span>
-                <select id="workerCountSelect" class="select" style="height: 32px">
-                  <option value="auto">Auto</option>
-                  <option value="1">1</option>
-                  <option value="2">2</option>
-                  <option value="4">4</option>
-                  <option value="6">6</option>
-                  <option value="8">8</option>
-                </select>
-              </label>
               <span class="hint" style="margin: 0">Top-5 updates only on improvements.</span>
             </span>
           </label>
 
           <label class="field">
-            <span class="fieldLabel">Distance metric (scoring + diversity)</span>
+            <span class="fieldLabel">
+              <span class="infoInline">
+                Distance metric (scoring + diversity)
+                <span
+                  class="infoIcon"
+                  tabindex="0"
+                  aria-label="Affects predicted WPM scoring and Top-5 diversity."
+                  data-tip="Affects predicted WPM scoring and Top-5 diversity."
+                  >i</span
+                >
+              </span>
+            </span>
             <span style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap">
               <label style="display: inline-flex; gap: 8px; align-items: center">
                 <input id="distUseCenter" type="checkbox" />
@@ -80,7 +128,18 @@
           </label>
 
           <details style="margin-top: 10px">
-            <summary class="hint" style="cursor: pointer">GA options (live)</summary>
+            <summary class="hint" style="cursor: pointer">
+              <span class="infoInline">
+                GA options (live)
+                <span
+                  class="infoIcon"
+                  tabindex="0"
+                  aria-label="Fine-tune the genetic algorithm while it runs."
+                  data-tip="Fine-tune the genetic algorithm while it runs."
+                  >i</span
+                >
+              </span>
+            </summary>
             <div class="phraseText" style="margin-top: 10px">
               <label class="field">
                 <span class="fieldLabel">Mutation rate: <span id="gaMutationRateValue" class="hint"></span></span>
@@ -130,6 +189,96 @@
               </div>
             </div>
           </details>
+
+          <details style="margin-top: 10px">
+            <summary class="hint" style="cursor: pointer">
+              <span class="infoInline">
+                Island options
+                <span
+                  class="infoIcon"
+                  tabindex="0"
+                  aria-label="Configure island count, spawning, and pruning."
+                  data-tip="Configure island count, spawning, and pruning."
+                  >i</span
+                >
+              </span>
+            </summary>
+            <div class="phraseText" style="margin-top: 10px">
+              <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px">
+                <label class="field">
+                  <span class="fieldLabel">
+                    <span class="infoInline">
+                      Initial islands
+                      <span
+                        class="infoIcon"
+                        tabindex="0"
+                        aria-label="How many islands to create on start or reset."
+                        data-tip="How many islands to create on start or reset."
+                        >i</span
+                      >
+                    </span>
+                  </span>
+                  <input id="islandInitialCount" type="number" min="1" max="100" step="1" />
+                  <span class="hint" style="margin-top: 6px; display: block">Starting population count.</span>
+                </label>
+
+                <label class="field">
+                  <span class="fieldLabel">
+                    <span class="infoInline">
+                      Max islands
+                      <span
+                        class="infoIcon"
+                        tabindex="0"
+                        aria-label="Maximum islands kept; lowest-performing islands are pruned beyond this."
+                        data-tip="Maximum islands kept; lowest-performing islands are pruned beyond this."
+                        >i</span
+                      >
+                    </span>
+                  </span>
+                  <input id="islandMaxCount" type="number" min="1" max="100" step="1" />
+                  <span class="hint" style="margin-top: 6px; display: block">Upper cap for island count.</span>
+                </label>
+
+                <label class="field">
+                  <span class="fieldLabel">
+                    <span class="infoInline">
+                      Spawn every (evals)
+                      <span
+                        class="infoIcon"
+                        tabindex="0"
+                        aria-label="Spawn a new island every N evaluations; 0 disables spawning."
+                        data-tip="Spawn a new island every N evaluations; 0 disables spawning."
+                        >i</span
+                      >
+                    </span>
+                  </span>
+                  <input id="islandSpawnEvery" type="number" min="0" max="1000000" step="100" />
+                  <span class="hint" style="margin-top: 6px; display: block">0 = no new islands.</span>
+                </label>
+
+                <label class="field">
+                  <span class="fieldLabel">
+                    <span class="infoInline">
+                      Min age (evals)
+                      <span
+                        class="infoIcon"
+                        tabindex="0"
+                        aria-label="Islands younger than this are protected from pruning."
+                        data-tip="Islands younger than this are protected from pruning."
+                        >i</span
+                      >
+                    </span>
+                  </span>
+                  <input id="islandMinAgeEvals" type="number" min="0" max="1000000" step="100" />
+                  <span class="hint" style="margin-top: 6px; display: block">Younger islands are protected.</span>
+                </label>
+              </div>
+
+              <div class="hint" style="margin-top: 6px">
+                Changing island settings restarts the run.
+              </div>
+            </div>
+          </details>
         </div>
 
         <div class="phrases" style="margin-top: 10px">
@@ -153,7 +302,16 @@
             <div id="corpusMeta" class="hint"></div>
 
             <div style="margin-top: 10px; display: flex; gap: 10px; flex-wrap: wrap">
-              <button id="downloadCorpusJsonBtn" class="btn btnSecondary" type="button">Download corpus JSON</button>
+              <span class="infoInline">
+                <button id="downloadCorpusJsonBtn" class="btn btnSecondary" type="button">Download corpus JSON</button>
+                <span
+                  class="infoIcon"
+                  tabindex="0"
+                  aria-label="Downloads the bigram corpus used for scoring."
+                  data-tip="Downloads the bigram corpus used for scoring."
+                  >i</span
+                >
+              </span>
             </div>
 
             <div class="tableWrap" style="margin-top: 12px">
@@ -177,12 +335,41 @@
         <h2 class="sectionTitle">Preview</h2>
         <div class="controls" style="margin: 10px 0 12px">
           <label class="field" style="min-width: 240px; flex: 1">
-            <span class="fieldLabel">Save name</span>
+            <span class="fieldLabel">
+              <span class="infoInline">
+                Save name
+                <span
+                  class="infoIcon"
+                  tabindex="0"
+                  aria-label="Name used when saving a layout to the typing page."
+                  data-tip="Name used when saving a layout to the typing page."
+                  >i</span
+                >
+              </span>
+            </span>
             <input id="saveLayoutName" class="select" type="text" placeholder="e.g., My GA layout" />
           </label>
           <div class="buttons">
-            <button id="saveLayoutBtn" class="btn btnSecondary" type="button">Save to typing page</button>
-            <button id="clearSavedLayoutsBtn" class="btn btnDanger" type="button">Clear saved</button>
+            <span class="infoInline">
+              <button id="saveLayoutBtn" class="btn btnSecondary" type="button">Save to typing page</button>
+              <span
+                class="infoIcon"
+                tabindex="0"
+                aria-label="Saves the current preview to the typing page dropdown."
+                data-tip="Saves the current preview to the typing page dropdown."
+                >i</span
+              >
+            </span>
+            <span class="infoInline">
+              <button id="clearSavedLayoutsBtn" class="btn btnDanger" type="button">Clear saved</button>
+              <span
+                class="infoIcon"
+                tabindex="0"
+                aria-label="Removes all saved layouts from local storage."
+                data-tip="Removes all saved layouts from local storage."
+                >i</span
+              >
+            </span>
           </div>
           <div id="saveLayoutStatus" class="hint" style="min-width: 220px" role="status" aria-live="polite"></div>
         </div>
@@ -190,13 +377,25 @@
       </section>
 
       <section class="panel">
-        <h2 class="sectionTitle">Top 5 leaderboard</h2>
+        <h2 class="sectionTitle">
+          <span class="infoInline">
+            Top 5 leaderboard
+            <span
+              class="infoIcon"
+              tabindex="0"
+              aria-label="Shows the current best layouts; click a row to preview."
+              data-tip="Shows the current best layouts; click a row to preview."
+              >i</span
+            >
+          </span>
+        </h2>
         <p class="hint">Click an entry to preview it.</p>
         <div class="tableWrap">
           <table class="table">
             <thead>
               <tr>
                 <th>#</th>
+                <th>Island</th>
                 <th>Predicted WPM</th>
                 <th>Avg ms/char</th>
                 <th>Sizes</th>
