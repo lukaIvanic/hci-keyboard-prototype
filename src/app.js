@@ -8,7 +8,7 @@
   const DEFAULT_PRACTICE_TRIALS = 2;
   const DEFAULT_TRIALS_PER_LAYOUT = 10;
   const GOOGLE_SHEETS_WEB_APP_URL =
-    "https://script.google.com/macros/s/AKfycbxjsQOJlIwoylALwds4SOOarroPxub3ZmJmDvaRdm5kcYhkWyExS8BfcXmepwUx_Y0tSg/exec";
+    "https://script.google.com/macros/s/AKfycbym_9NOItbd3M3HgQfr-PY_W5Utu3_BVjZcDpXhjeMTiIu3dtF0AAq9j6DRxSG0jw4mAg/exec";
 
   const PHRASES = [
     "the quick brown fox",
