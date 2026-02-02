@@ -3,21 +3,20 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Study Assets</title>
+    <title>Live Analysis</title>
     <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="styles-minimal.css" />
 
-    <script defer src="vendor/fflate.min.js"></script>
-    <script defer src="src/studyTemplates.js"></script>
-    <script defer src="src/studyApp.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/jstat"></script>
+    <script defer src="src/analysisApp.js"></script>
   </head>
   <body>
     <main class="container">
       <header class="header">
         <div>
-          <h1 class="title">Study Assets</h1>
-          <p class="subtitle">
-            Edit study materials, generate templates, and export a complete project package bundle.
-          </p>
+          <h1 class="title">Live Analysis</h1>
+          <p class="subtitle">Fetch results from the All_Trials sheet and compute summaries in real time.</p>
         </div>
         <div class="buttons">
           <span class="infoInline">
@@ -31,16 +30,6 @@
             >
           </span>
           <span class="infoInline">
-            <a class="btn btnSecondary" href="analysis.html">Live analysis</a>
-            <span
-              class="infoIcon"
-              tabindex="0"
-              aria-label="View the live analysis dashboard."
-              data-tip="View the live analysis dashboard."
-              >i</span
-            >
-          </span>
-          <span class="infoInline">
             <a class="btn btnSecondary" href="generator.html">Generator</a>
             <span
               class="infoIcon"
@@ -50,36 +39,34 @@
               >i</span
             >
           </span>
+          <span class="infoInline">
+            <a class="btn btnSecondary" href="study.html">Study assets</a>
+            <span
+              class="infoIcon"
+              tabindex="0"
+              aria-label="Open the study assets hub."
+              data-tip="Open the study assets hub."
+              >i</span
+            >
+          </span>
         </div>
       </header>
 
       <section class="panel">
-        <h2 class="sectionTitle">Study progress</h2>
-        <div id="studyStepper" class="stepper"></div>
-        <div class="progressBar" aria-label="Study progress">
-          <div id="studyProgressFill" class="progressFill"></div>
-        </div>
-        <div id="studyProgressLabel" class="progressLabel"></div>
-        <div id="studyAction" class="callout" role="status" aria-live="polite"></div>
-      </section>
-
-      <section class="panel">
-        <h2 class="sectionTitle">Protocol flow</h2>
-        <p class="hint">Use these steps during a study session.</p>
-        <div id="protocolFlow" class="protocolFlow"></div>
-        <div class="studySection" style="margin-top: 10px">
-          <div class="studyTitle">Session notes</div>
-          <textarea id="sessionNotes" class="studyTextarea" rows="6" placeholder="Notes about this session..."></textarea>
-        </div>
-      </section>
-
-      <section class="panel">
-        <h2 class="sectionTitle">Analysis</h2>
-        <p class="hint">Import a CSV export to compute summaries and quality checks.</p>
+        <h2 class="sectionTitle">Data source</h2>
+        <p class="hint">
+          Publish the All_Trials tab to web and paste the CSV link here. Example: a URL ending with
+          <code>output=csv</code>.
+        </p>
         <div class="studyGrid">
           <label class="field">
-            <span class="fieldLabel">CSV file</span>
-            <input id="analysisFileInput" class="select" type="file" accept=".csv" />
+            <span class="fieldLabel">Published CSV URL</span>
+            <input
+              id="analysisSheetUrl"
+              class="select"
+              type="url"
+              placeholder="https://docs.google.com/spreadsheets/d/.../pub?output=csv"
+            />
           </label>
           <label class="field">
             <span class="fieldLabel">Exclude practice</span>
@@ -102,9 +89,11 @@
           </label>
         </div>
         <div class="studyButtons" style="margin-top: 10px">
-          <button id="runAnalysisBtn" class="btn btnPrimary" type="button">Run analysis</button>
+          <button id="analysisFetchBtn" class="btn btnPrimary" type="button">Refresh analysis</button>
           <button id="downloadSummaryBtn" class="btn btnSecondary" type="button">Download summary CSV</button>
           <button id="downloadReportSnippetBtn" class="btn btnSecondary" type="button">Download report snippet</button>
+          <button id="downloadResultsTablesBtn" class="btn btnSecondary" type="button">Download results tables</button>
+          <button id="downloadFiguresListBtn" class="btn btnSecondary" type="button">Download figures list</button>
         </div>
         <div id="analysisStatus" class="hint" role="status" aria-live="polite"></div>
         <div class="analysisGrid">
@@ -136,17 +125,43 @@
       </section>
 
       <section class="panel">
-        <h2 class="sectionTitle">Bundle export</h2>
-        <p class="hint">Download a zip containing protocol templates, analysis outputs, and QC report.</p>
-        <div class="studyButtons">
-          <button id="downloadBundleBtn" class="btn btnPrimary" type="button">Download bundle (zip)</button>
-          <div id="bundleStatus" class="hint" role="status" aria-live="polite"></div>
+        <h2 class="sectionTitle">Study diagnostics</h2>
+        <p class="hint">Quality checks and report-ready summaries derived from the filtered dataset.</p>
+        <div class="analysisGrid">
+          <div class="analysisCard">
+            <div class="studyTitle">Data quality</div>
+            <div id="analysisDataQuality" class="analysisSummary"></div>
+          </div>
+          <div class="analysisCard">
+            <div class="studyTitle">Primary outcomes</div>
+            <div id="analysisPrimaryOutcomes" class="analysisSummary"></div>
+          </div>
+        </div>
+        <div class="analysisGrid">
+          <div class="analysisCard">
+            <div class="studyTitle">Learning &amp; fatigue</div>
+            <div id="analysisLearningSummary" class="analysisSummary"></div>
+          </div>
+          <div class="analysisCard">
+            <div class="studyTitle">Order &amp; carryover</div>
+            <div id="analysisOrderSummary" class="analysisSummary"></div>
+          </div>
         </div>
       </section>
 
       <section class="panel">
-        <h2 class="sectionTitle">Study documents</h2>
-        <div id="studySections" class="studySections"></div>
+        <h2 class="sectionTitle">Metrics dashboard</h2>
+        <p class="hint">
+          Charts and inferential stats are computed from per-participant averages (practice excluded).
+        </p>
+        <div class="chartGrid">
+          <div class="chartCard chartCardWide">
+            <div class="studyTitle">Speed–accuracy tradeoff</div>
+            <div id="chartSpeedAccuracy" class="chart"></div>
+            <div id="speedAccuracyStats" class="analysisSummary"></div>
+          </div>
+        </div>
+        <div id="metricsDashboard" class="metricsDashboard"></div>
       </section>
     </main>
   </body>

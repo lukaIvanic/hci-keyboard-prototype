@@ -629,17 +629,19 @@
   function showWizardTransition(prevStep, nextStep) {
     if (prevStep === nextStep) return;
     if (nextStep === "practice") {
+      const layoutLabel = currentLayoutLabel();
       openWizardModal({
         title: "Practice start",
-        message: "You will complete practice trials first. Use the on-screen keyboard and press Enter to submit each phrase.",
+        message: `You will complete practice trials for ${layoutLabel} first. Use the on-screen keyboard and press Enter to submit each phrase.`,
         buttonLabel: "Start practice",
       });
       return;
     }
     if (nextStep === "main") {
+      const layoutLabel = currentLayoutLabel();
       openWizardModal({
         title: "Main trials",
-        message: "Practice is done. Continue with the main trials and press Enter to submit each phrase.",
+        message: `Practice is done. Continue with the main trials for ${layoutLabel} and press Enter to submit each phrase.`,
         buttonLabel: "Start main trials",
       });
       return;
@@ -675,6 +677,12 @@
     const submitBtn = $("submitTrialBtn");
     submitBtn.disabled = flag;
     $("experimentSkipBtn").disabled = flag || !experiment.running;
+  }
+
+  function resetPracticeForLayout() {
+    const total = experiment.practiceTrials;
+    experiment.practiceRemaining = total;
+    experiment.currentTrialIsPractice = total > 0;
   }
 
   function openPracticeModal() {
@@ -836,8 +844,7 @@
     experiment.trialInLayout = 0;
     experiment.practiceTrials = settings.practiceTrials;
     experiment.trialsPerLayout = settings.trialsPerLayout;
-    experiment.practiceRemaining = settings.practiceTrials;
-    experiment.currentTrialIsPractice = settings.practiceTrials > 0;
+    resetPracticeForLayout();
     experiment.orderMode = settings.orderMode;
     experiment.orderSeed = settings.orderSeed;
 
@@ -917,6 +924,7 @@
       renderLayoutSelect();
       renderKeyboard();
       resetTrial();
+      resetPracticeForLayout();
     }
 
     updateExperimentStatus();
@@ -924,9 +932,7 @@
 
   function handlePracticeRepeat() {
     closePracticeModal();
-    experiment.practiceRemaining = DEFAULT_PRACTICE_TRIALS;
-    experiment.practiceTrials = DEFAULT_PRACTICE_TRIALS;
-    experiment.currentTrialIsPractice = experiment.practiceRemaining > 0;
+    resetPracticeForLayout();
     updateExperimentStatus();
   }
 
@@ -961,6 +967,7 @@
     renderLayoutSelect();
     renderKeyboard();
     resetTrial();
+    resetPracticeForLayout();
     updateExperimentStatus();
   }
 
