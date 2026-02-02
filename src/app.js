@@ -8,7 +8,7 @@
   const DEFAULT_PRACTICE_TRIALS = 2;
   const DEFAULT_TRIALS_PER_LAYOUT = 10;
   const GOOGLE_SHEETS_WEB_APP_URL =
-    "https://script.google.com/macros/s/AKfycbym_9NOItbd3M3HgQfr-PY_W5Utu3_BVjZcDpXhjeMTiIu3dtF0AAq9j6DRxSG0jw4mAg/exec";
+    "https://script.google.com/macros/s/AKfycbytD-NEdHkHJGAHObI12TCWxzEga5m_PX4A1vmbAJrdwQXSxEQZ8SMTZvbzJ5wq7LbNeA/exec";
 
   const PHRASES = [
     "the quick brown fox",
@@ -415,7 +415,9 @@
       return;
     }
 
-    setSheetStatus("Sending results to Google Sheets...");
+    const participantId = String(payload.session?.participantId ?? "").trim();
+    const warningPrefix = participantId ? "" : "Participant ID is empty; sending to the 'Unknown' sheet. ";
+    setSheetStatus(`${warningPrefix}Sending results to Google Sheets...`);
     try {
       await fetch(url, {
         method: "POST",
