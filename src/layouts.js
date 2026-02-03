@@ -608,6 +608,23 @@
     return { id, name, createdAtMs: Number.isFinite(createdAtMs) ? createdAtMs : 0, keys };
   }
 
+  function loadBakedLayouts() {
+    const baked = Array.isArray(ns.bakedLayouts) ? ns.bakedLayouts : [];
+    let count = 0;
+    for (const rec of baked) {
+      const normalized = normalizeLayoutRecord(rec);
+      if (!normalized) continue;
+      try {
+        const keys = normalized.keys.map((k) => makeKey(k));
+        registerLayout({ id: normalized.id, name: normalized.name, keys }, { createdAtMs: normalized.createdAtMs });
+        count += 1;
+      } catch {
+        // Skip invalid baked entries.
+      }
+    }
+    return count;
+  }
+
   function normalizeLayoutName(name) {
     return String(name ?? "")
       .trim()
@@ -726,6 +743,10 @@
     return { id, name, createdAtMs };
   }
 
+  function exportUserLayouts() {
+    return readUserLayoutRecords();
+  }
+
   function clearUserLayouts() {
     if (!hasLocalStorage()) return;
     localStorage.removeItem(USER_LAYOUTS_STORAGE_KEY);
@@ -760,11 +781,13 @@
     // User-saved layouts (persisted via localStorage)
     loadUserLayouts,
     saveUserLayout,
+    exportUserLayouts,
     clearUserLayouts,
   };
 
   // Auto-load saved layouts (best effort).
   try {
+    loadBakedLayouts();
     loadUserLayouts();
   } catch (err) {
     console.warn("Failed to load user layouts:", err);

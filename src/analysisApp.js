@@ -5,6 +5,7 @@
   const URL_STORAGE_KEY = `${STORAGE_PREFIX}sheetUrl.v1`;
   const ANALYSIS_STORAGE_KEY = `${STORAGE_PREFIX}analysis.v1`;
   const THRESHOLD_STORAGE_KEY = `${STORAGE_PREFIX}thresholds.v1`;
+  const PARTICIPANT_FILTER_KEY = `${STORAGE_PREFIX}participantFilter.v1`;
   const DEFAULT_DEMO_CSV_URL = "analysis/fake_dataset_20_participants.csv";
 
   const METRICS = [
@@ -47,6 +48,11 @@
 
   const CI_Z = 1.96;
 
+  let lastRows = null;
+  let lastThresholds = null;
+  let lastParticipantIds = [];
+  let lastParticipantSelection = new Set();
+
   function $(id) {
     const el = document.getElementById(id);
     if (!el) throw new Error(`Missing element #${id}`);
@@ -75,6 +81,21 @@
     return raw
       ? safeParse(raw, { minTrials: 5, minElapsedMs: 2000, maxErrorRate: 0.4, excludePractice: true })
       : { minTrials: 5, minElapsedMs: 2000, maxErrorRate: 0.4, excludePractice: true };
+  }
+
+  function loadParticipantFilter() {
+    const raw = localStorage.getItem(PARTICIPANT_FILTER_KEY);
+    if (!raw) return null;
+    const parsed = safeParse(raw, null);
+    return Array.isArray(parsed) ? parsed : null;
+  }
+
+  function saveParticipantFilter(ids) {
+    if (!Array.isArray(ids)) {
+      localStorage.removeItem(PARTICIPANT_FILTER_KEY);
+      return;
+    }
+    localStorage.setItem(PARTICIPANT_FILTER_KEY, JSON.stringify(ids));
   }
 
   function saveThresholds(state) {
@@ -172,6 +193,111 @@
     if (sd == null || n < 2) return { mean: m, ci: null, n };
     const se = sd / Math.sqrt(n);
     return { mean: m, ci: CI_Z * se, n };
+  }
+
+  function listParticipants(rows) {
+    const set = new Set();
+    rows.forEach((row) => {
+      const pid = String(row.participantId || "unknown").trim() || "unknown";
+      set.add(pid);
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }
+
+  function normalizeParticipantSelection(savedIds, availableIds) {
+    if (!Array.isArray(availableIds) || !availableIds.length) return new Set();
+    const availableSet = new Set(availableIds);
+    const saved = Array.isArray(savedIds) ? savedIds.filter((id) => availableSet.has(id)) : [];
+    if (!saved.length) return new Set(availableIds);
+    return new Set(saved);
+  }
+
+  function applyParticipantFilter(rows, selectedSet) {
+    if (!selectedSet || selectedSet.size === 0) return [];
+    return rows.filter((row) => {
+      const pid = String(row.participantId || "unknown").trim() || "unknown";
+      return selectedSet.has(pid);
+    });
+  }
+
+  function updateParticipantSummary(selectedSet, totalCount) {
+    const summaryEl = document.getElementById("analysisParticipantSummary");
+    if (!summaryEl) return;
+    if (!totalCount) {
+      summaryEl.textContent = "Load data to see participants.";
+      return;
+    }
+    const selectedCount = selectedSet ? selectedSet.size : 0;
+    summaryEl.textContent = `${selectedCount}/${totalCount} participants selected.`;
+  }
+
+  function recomputeFromFilters(statusEl) {
+    if (!lastRows || !lastThresholds) return;
+    const filteredRows = applyParticipantFilter(lastRows, lastParticipantSelection);
+    const analysis = computeAnalysisData(filteredRows, lastThresholds);
+    renderDashboard(analysis, lastThresholds, statusEl || null);
+    if (statusEl) {
+      statusEl.textContent = filteredRows.length ? "Analysis updated." : "No participants selected.";
+    }
+  }
+
+  function renderParticipantFilter(participantIds, selectedSet, statusEl) {
+    const listEl = document.getElementById("analysisParticipantList");
+    const selectAllBtn = document.getElementById("analysisSelectAllBtn");
+    const selectNoneBtn = document.getElementById("analysisSelectNoneBtn");
+    if (!listEl) return;
+    listEl.innerHTML = "";
+
+    const ids = Array.isArray(participantIds) ? participantIds : [];
+    lastParticipantIds = ids;
+    lastParticipantSelection = selectedSet instanceof Set ? selectedSet : new Set();
+
+    updateParticipantSummary(lastParticipantSelection, ids.length);
+
+    if (!ids.length) {
+      if (selectAllBtn) selectAllBtn.disabled = true;
+      if (selectNoneBtn) selectNoneBtn.disabled = true;
+      return;
+    }
+
+    if (selectAllBtn) {
+      selectAllBtn.disabled = false;
+      selectAllBtn.onclick = () => {
+        lastParticipantSelection = new Set(ids);
+        saveParticipantFilter(Array.from(lastParticipantSelection));
+        renderParticipantFilter(ids, lastParticipantSelection, statusEl);
+        recomputeFromFilters(statusEl);
+      };
+    }
+    if (selectNoneBtn) {
+      selectNoneBtn.disabled = false;
+      selectNoneBtn.onclick = () => {
+        lastParticipantSelection = new Set();
+        saveParticipantFilter([]);
+        renderParticipantFilter(ids, lastParticipantSelection, statusEl);
+        recomputeFromFilters(statusEl);
+      };
+    }
+
+    ids.forEach((pid) => {
+      const label = document.createElement("label");
+      label.className = "analysisParticipantItem";
+      const input = document.createElement("input");
+      input.type = "checkbox";
+      input.checked = lastParticipantSelection.has(pid);
+      input.addEventListener("change", () => {
+        if (input.checked) lastParticipantSelection.add(pid);
+        else lastParticipantSelection.delete(pid);
+        saveParticipantFilter(Array.from(lastParticipantSelection));
+        updateParticipantSummary(lastParticipantSelection, ids.length);
+        recomputeFromFilters(statusEl);
+      });
+      const text = document.createElement("span");
+      text.textContent = pid;
+      label.appendChild(input);
+      label.appendChild(text);
+      listEl.appendChild(label);
+    });
   }
 
   function pearsonCorrelation(xs, ys) {
@@ -2180,8 +2306,16 @@ Generated by the study analysis tool.
         return;
       }
       const rows = parsed.rows;
-      const analysis = computeAnalysisData(rows, thresholds);
-      const payload = { rows, thresholds, updatedAtMs: Date.now() };
+      lastRows = rows;
+      lastThresholds = thresholds;
+      const participantIds = listParticipants(rows);
+      const savedFilter = loadParticipantFilter();
+      const selectedSet = normalizeParticipantSelection(savedFilter, participantIds);
+      saveParticipantFilter(Array.from(selectedSet));
+      renderParticipantFilter(participantIds, selectedSet, statusEl);
+      const filteredRows = applyParticipantFilter(rows, selectedSet);
+      const analysis = computeAnalysisData(filteredRows, thresholds);
+      const payload = { rows, thresholds, updatedAtMs: Date.now(), participantFilter: Array.from(selectedSet) };
       saveAnalysisState(payload);
       renderDashboard(analysis, thresholds, statusEl);
 
@@ -2205,7 +2339,15 @@ Generated by the study analysis tool.
     if (stored) {
       const storedThresholds = stored.thresholds || thresholds;
       if (Array.isArray(stored.rows) && stored.rows.length) {
-        const analysis = computeAnalysisData(stored.rows, storedThresholds);
+        lastRows = stored.rows;
+        lastThresholds = storedThresholds;
+        const participantIds = listParticipants(stored.rows);
+        const savedFilter = loadParticipantFilter() || stored.participantFilter || null;
+        const selectedSet = normalizeParticipantSelection(savedFilter, participantIds);
+        saveParticipantFilter(Array.from(selectedSet));
+        renderParticipantFilter(participantIds, selectedSet, $("analysisStatus"));
+        const filteredRows = applyParticipantFilter(stored.rows, selectedSet);
+        const analysis = computeAnalysisData(filteredRows, storedThresholds);
         renderDashboard(analysis, storedThresholds, $("analysisStatus"));
       } else if (stored.summary) {
         renderAnalysisSummary(stored.summary);
@@ -2223,6 +2365,10 @@ Generated by the study analysis tool.
         $("analysisStatus").textContent =
           "Stored summary loaded. Click Refresh analysis to recompute charts.";
       }
+    }
+
+    if (!lastRows) {
+      renderParticipantFilter([], new Set(), $("analysisStatus"));
     }
 
     $("analysisFetchBtn").addEventListener("click", fetchAndAnalyze);

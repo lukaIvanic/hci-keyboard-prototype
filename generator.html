@@ -7,6 +7,7 @@
     <link rel="stylesheet" href="styles.css" />
 
     <!-- Shared scripts (no build tools). -->
+    <script defer src="src/bakedLayouts.js"></script>
     <script defer src="src/layouts.js"></script>
     <script defer src="src/metrics.js"></script>
     <script defer src="corpus/gutenberg/pg1342_bigrams.js"></script>
@@ -353,6 +354,16 @@
                 tabindex="0"
                 aria-label="Saves the current preview to the typing page dropdown."
                 data-tip="Saves the current preview to the typing page dropdown."
+                >i</span
+              >
+            </span>
+            <span class="infoInline">
+              <button id="exportLayoutsBtn" class="btn btnSecondary" type="button">Download saved layouts JSON</button>
+              <span
+                class="infoIcon"
+                tabindex="0"
+                aria-label="Downloads a JSON file of user-saved layouts for baking into the project."
+                data-tip="Downloads a JSON file of user-saved layouts for baking into the project."
                 >i</span
               >
             </span>

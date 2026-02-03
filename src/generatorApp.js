@@ -1096,6 +1096,28 @@
       }
     });
 
+    const exportBtn = document.getElementById("exportLayoutsBtn");
+    if (exportBtn) {
+      exportBtn.addEventListener("click", () => {
+        const records = ns.layouts.exportUserLayouts();
+        if (!Array.isArray(records) || !records.length) {
+          setText($("saveLayoutStatus"), "No saved layouts to export.");
+          return;
+        }
+        const json = JSON.stringify(records, null, 2);
+        const blob = new Blob([json], { type: "application/json;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "baked_layouts.json";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 500);
+        setText($("saveLayoutStatus"), `Downloaded ${records.length} layout(s).`);
+      });
+    }
+
     $("clearSavedLayoutsBtn").addEventListener("click", () => {
       try {
         ns.layouts.clearUserLayouts();

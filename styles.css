@@ -671,6 +671,30 @@ body[data-session-running="true"] .controlTrayDetails {
   margin-top: 8px;
 }
 
+#analysisParticipantList {
+  margin-top: 8px;
+}
+
+.analysisParticipantList {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  max-height: 240px;
+  overflow: auto;
+  padding: 6px;
+  border-radius: var(--radiusSmall);
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.analysisParticipantItem {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 12.5px;
+  color: var(--text);
+}
+
 #speedAccuracyStats {
   margin-top: 8px;
 }
