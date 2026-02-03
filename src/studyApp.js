@@ -57,6 +57,12 @@
       action: "Collect feedback and record final notes.",
     },
     {
+      id: "nasa-tlx",
+      label: "NASA-TLX",
+      protocolId: "debrief",
+      action: "Administer NASA-TLX and confirm the responses were saved.",
+    },
+    {
       id: "analysis",
       label: "Analysis",
       protocolId: null,

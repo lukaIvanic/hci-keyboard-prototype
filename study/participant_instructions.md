@@ -9,6 +9,9 @@ You will copy-type short phrases using an on-screen keyboard. Accuracy is more i
 - Complete the practice trials to get familiar with the layout.
 - Continue until the session is finished.
 
+## After the session
+- Complete a short NASA-TLX workload questionnaire (about 2-4 minutes).
+
 ## Tips
 - Focus on accuracy; speed will follow.
 - Keep a consistent posture and distance from the screen.

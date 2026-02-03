@@ -12,6 +12,7 @@
 - Monitor for fatigue and allow short breaks if needed.
 
 ## After the session
+- Administer NASA-TLX and confirm it was saved.
 - Export CSV and JSON.
 - Record any anomalies or interruptions.
 - Save files in the designated project package folders.

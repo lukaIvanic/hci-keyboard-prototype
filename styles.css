@@ -8,6 +8,11 @@
   --shadow: rgba(0, 0, 0, 0.35);
   --primary: #6aa6ff;
   --danger: #ff6a80;
+  --phase-accent: #6aa6ff;
+  --phase-accent-soft: rgba(106, 166, 255, 0.55);
+  --phase-practice: #7fd3ff;
+  --phase-main: #7fdc8b;
+  --phase-results: #f1c075;
 
   --radius: 14px;
   --radiusSmall: 10px;
@@ -24,6 +29,7 @@
 html,
 body {
   height: 100%;
+  overflow: auto;
 }
 
 body {
@@ -43,10 +49,57 @@ body {
   color: var(--text);
 }
 
+.typingPage {
+  overflow: hidden;
+}
+
+body[data-phase="setup"] {
+  --phase-accent: #6aa6ff;
+  --phase-accent-soft: rgba(106, 166, 255, 0.55);
+}
+
+body[data-phase="practice"] {
+  --phase-accent: #7fd3ff;
+  --phase-accent-soft: rgba(127, 211, 255, 0.55);
+}
+
+body[data-phase="learning"] {
+  --phase-accent: #b790ff;
+  --phase-accent-soft: rgba(183, 144, 255, 0.55);
+}
+
+body[data-phase="main"] {
+  --phase-accent: #7fdc8b;
+  --phase-accent-soft: rgba(127, 220, 139, 0.55);
+}
+
+body[data-phase="results"] {
+  --phase-accent: #f1c075;
+  --phase-accent-soft: rgba(241, 192, 117, 0.55);
+}
+
+body[data-session-running="true"] .header .buttons {
+  display: none;
+}
+
+body[data-session-running="true"] .hudDetail,
+body[data-session-running="true"] .wizardStatus {
+  opacity: 0.7;
+}
+
 .container {
   max-width: 1040px;
   margin: 0 auto;
   padding: 18px 14px 40px;
+}
+
+.typingPage .container {
+  max-width: none;
+  width: 100vw;
+  height: 100vh;
+  padding: 0;
+  margin: 0;
+  overflow: hidden;
 }
 
 .header {
@@ -77,6 +130,102 @@ body {
   box-shadow: 0 12px 24px var(--shadow);
   padding: 14px;
   margin: 12px 0;
+}
+
+.experimentLayout {
+  display: grid;
+  grid-template-columns: 20vw 1fr;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.experimentRail {
+  display: grid;
+  grid-template-rows: auto auto auto 1fr auto;
+  gap: 10px;
+  padding: 10px 8px;
+  border-right: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.railBlock {
+  display: grid;
+  gap: 8px;
+}
+
+.experimentRail .stepper {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  position: relative;
+  padding-left: 14px;
+}
+
+.experimentRail .step {
+  width: 100%;
+  text-align: left;
+  position: relative;
+  padding-left: 10px;
+}
+
+.experimentRail .step::before {
+  content: "";
+  position: absolute;
+  left: -12px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.experimentRail .step:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  left: -8px;
+  top: calc(50% + 6px);
+  width: 2px;
+  height: calc(100% + 4px);
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.experimentRail .stepActive::before {
+  border-color: rgba(106, 166, 255, 0.7);
+  background: rgba(106, 166, 255, 0.35);
+}
+
+.experimentRail .stepDone::before {
+  border-color: rgba(255, 255, 255, 0.4);
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.experimentMain {
+  display: grid;
+  grid-template-rows: 10vh 1fr;
+  height: 100vh;
+  overflow: hidden;
+  padding: 8px 12px;
+  gap: 8px;
+}
+
+.experimentMain .phraseRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+  height: 10vh;
+  min-height: 10vh;
+  max-height: 10vh;
+  overflow: hidden;
+}
+
+.experimentMain .phraseCell {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: 6px;
+  overflow: hidden;
+  min-width: 0;
 }
 
 .controls {
@@ -205,20 +354,56 @@ body {
   white-space: pre-wrap;
 }
 
+.phraseHeading {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  color: rgba(242, 245, 255, 0.85);
+}
+
+.experimentMain .phraseRow .phraseText,
+.experimentMain .phraseRow .typedText {
+  height: 100%;
+  min-height: 0;
+  font-size: clamp(15px, 1.6vw, 20px);
+  line-height: 1.15;
+  white-space: normal;
+  word-break: break-word;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
 .typedText:empty::before {
   content: "Tap keys to type…";
   color: rgba(169, 179, 208, 0.7);
 }
 
+
 .keyboardContainer {
   position: relative;
   width: 100%;
-  max-width: 840px;
-  margin: 0 auto;
+  max-width: 100%;
+  margin: 0;
   border: 1px dashed rgba(255, 255, 255, 0.18);
   border-radius: var(--radius);
   background: rgba(0, 0, 0, 0.18);
   overflow: hidden;
+}
+
+.keyboardRow {
+  display: grid;
+  align-items: end;
+  justify-items: start;
+  overflow: hidden;
+  height: 100%;
+  box-sizing: border-box;
+}
+
+.experimentMain .keyboardRow {
+  padding: 10%;
 }
 
 .key {
@@ -230,12 +415,19 @@ body {
   border: 1px solid rgba(255, 255, 255, 0.16);
   background: var(--kbdKeyBg);
   color: var(--text);
-  font-size: 15px;
+  font-size: clamp(16px, 2.1vw, 24px);
   font-weight: 600;
   cursor: pointer;
   user-select: none;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
+}
+
+.keyTarget {
+  border-color: var(--phase-accent);
+  box-shadow:
+    0 0 0 2px var(--phase-accent-soft),
+    0 0 14px var(--phase-accent);
 }
 
 .key:hover {
@@ -248,14 +440,45 @@ body {
 }
 
 .key.keyWide {
-  font-size: 13px;
+  font-size: clamp(14px, 1.4vw, 18px);
   font-weight: 700;
+}
+
+#submitTrialBtn.submitReady {
+  border-color: var(--phase-accent);
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.18), rgba(0, 0, 0, 0.05));
+  box-shadow:
+    0 0 0 2px var(--phase-accent-soft),
+    0 0 16px var(--phase-accent);
 }
 
 .exports {
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
+}
+
+.controlTrayDetails {
+  border: 1px solid var(--border);
+  border-radius: var(--radiusSmall);
+  padding: 10px 12px;
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.controlTraySummary {
+  cursor: pointer;
+  font-weight: 700;
+  font-size: 13px;
+  color: rgba(242, 245, 255, 0.9);
+  list-style: none;
+}
+
+.controlTrayDetails[open] .controlTraySummary {
+  margin-bottom: 8px;
+}
+
+body[data-session-running="true"] .controlTrayDetails {
+  opacity: 0.75;
 }
 
 .sectionTitle {
@@ -419,6 +642,23 @@ body {
   background: rgba(0, 0, 0, 0.2);
 }
 
+.analysisCardKey {
+  border-color: rgba(106, 166, 255, 0.65);
+  box-shadow:
+    0 0 0 1px rgba(106, 166, 255, 0.25),
+    0 0 18px rgba(106, 166, 255, 0.18);
+}
+
+.sectionCallout {
+  padding: 8px 10px;
+  border-radius: var(--radiusSmall);
+  border: 1px solid rgba(106, 166, 255, 0.4);
+  background: rgba(106, 166, 255, 0.12);
+  font-size: 12.5px;
+  color: var(--text);
+  margin: 8px 0 12px;
+}
+
 .analysisSummary {
   margin-top: 6px;
   display: grid;
@@ -439,6 +679,59 @@ body {
   margin-top: 8px;
   display: grid;
   gap: 6px;
+}
+
+.tlxPanel {
+  display: grid;
+  gap: 10px;
+}
+
+.tlxStatus {
+  margin-top: 0;
+}
+
+.tlxGrid {
+  display: grid;
+  gap: 10px;
+}
+
+.tlxRow {
+  display: grid;
+  gap: 6px;
+}
+
+.tlxLabel {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: rgba(242, 245, 255, 0.95);
+}
+
+.tlxControl {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.tlxAnchor {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.tlxSlider {
+  width: 100%;
+}
+
+.tlxValue {
+  min-width: 28px;
+  text-align: right;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.tlxNote {
+  font-size: 11.5px;
+  color: var(--muted);
 }
 
 .metricsDashboard {
@@ -566,14 +859,14 @@ body {
   padding: 4px 10px;
   border-radius: 999px;
   border: 1px solid var(--border);
-  font-size: 12px;
+  font-size: 13px;
   color: var(--muted);
   background: rgba(0, 0, 0, 0.18);
 }
 
 .stepperDense .step {
   padding: 3px 8px;
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .stepActive {
@@ -601,12 +894,80 @@ body {
 .progressFill {
   height: 100%;
   width: 0%;
-  background: linear-gradient(90deg, rgba(106, 166, 255, 0.6), rgba(106, 166, 255, 0.9));
+  background: linear-gradient(90deg, var(--phase-accent-soft), var(--phase-accent));
   transition: width 120ms ease;
 }
 
+.progressFillPractice {
+  background: linear-gradient(90deg, rgba(127, 211, 255, 0.5), rgba(127, 211, 255, 0.95));
+}
+
+.progressFillMain {
+  background: linear-gradient(90deg, rgba(127, 220, 139, 0.5), rgba(127, 220, 139, 0.95));
+}
+
+.progressBarLarge {
+  height: 12px;
+  margin: 6px 0 2px;
+}
+
+.progressBarSmall {
+  height: 6px;
+  margin: 0;
+}
+
+.progressRow {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.progressStack {
+  display: grid;
+  gap: 6px;
+  min-width: 240px;
+  flex: 1;
+}
+
+.experimentHud {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.hudMain {
+  display: grid;
+  gap: 6px;
+}
+
+.phaseTitle {
+  margin: 0;
+  font-size: clamp(18px, 2vw, 24px);
+  letter-spacing: 0.4px;
+}
+
+.phaseMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: clamp(13px, 1.3vw, 15px);
+  color: rgba(242, 245, 255, 0.92);
+}
+
+.phaseMetaMuted {
+  font-size: clamp(12px, 1.1vw, 13px);
+  color: var(--muted);
+}
+
+.hudDetail {
+  display: grid;
+  gap: 6px;
+}
+
 .progressLabel {
-  font-size: 12.5px;
+  font-size: 14px;
   color: var(--muted);
   margin-bottom: 6px;
 }
@@ -615,8 +976,8 @@ body {
   margin-top: 8px;
   padding: 10px 12px;
   border-radius: var(--radiusSmall);
-  border: 1px solid rgba(106, 166, 255, 0.55);
-  background: rgba(106, 166, 255, 0.12);
+  border: 1px solid color-mix(in srgb, var(--phase-accent), transparent 35%);
+  background: color-mix(in srgb, var(--phase-accent), transparent 85%);
   font-size: 13px;
   color: var(--text);
 }
@@ -629,24 +990,52 @@ body {
 .nextAction,
 .requiredField,
 .focusArea {
-  border-color: rgba(106, 166, 255, 0.8);
+  border-color: color-mix(in srgb, var(--phase-accent), transparent 20%);
   box-shadow:
-    0 0 0 2px rgba(106, 166, 255, 0.35),
-    0 0 18px rgba(106, 166, 255, 0.25);
+    0 0 0 2px color-mix(in srgb, var(--phase-accent), transparent 65%),
+    0 0 18px color-mix(in srgb, var(--phase-accent), transparent 70%);
 }
 
 .nextAction {
-  background: rgba(106, 166, 255, 0.22);
+  background: color-mix(in srgb, var(--phase-accent), transparent 75%);
 }
 
 .requiredField {
-  background: rgba(106, 166, 255, 0.12);
+  background: color-mix(in srgb, var(--phase-accent), transparent 85%);
 }
 
 .focusArea {
   box-shadow:
-    0 0 0 2px rgba(106, 166, 255, 0.45),
-    0 0 24px rgba(106, 166, 255, 0.25);
+    0 0 0 2px color-mix(in srgb, var(--phase-accent), transparent 55%),
+    0 0 24px color-mix(in srgb, var(--phase-accent), transparent 70%);
+}
+
+.toastRegion {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  display: grid;
+  gap: 8px;
+  z-index: 90;
+  pointer-events: none;
+}
+
+.toast {
+  border-radius: var(--radiusSmall);
+  border: 1px solid var(--border);
+  background: rgba(12, 16, 32, 0.95);
+  padding: 8px 12px;
+  font-size: 12.5px;
+  color: var(--text);
+  box-shadow: 0 10px 24px var(--shadow);
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 200ms ease, transform 200ms ease;
+}
+
+.toastFade {
+  opacity: 0;
+  transform: translateY(4px);
 }
 
 .modalOpen {
@@ -811,10 +1200,21 @@ body {
   margin-top: 10px;
 }
 
-@media (max-width: 520px) {
-  .phraseRow {
-    grid-template-columns: 56px 1fr;
+@media (max-height: 820px) {
+  .panel {
+    margin: 8px 0;
   }
+
+  .wizardContainer {
+    gap: 10px;
+  }
+}
+
+@media (max-width: 520px) {
+  .progressRow {
+    grid-template-columns: 1fr;
+  }
+
   .table {
     min-width: 640px;
   }

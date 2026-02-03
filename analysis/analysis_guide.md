@@ -6,16 +6,20 @@ Use the exported CSV file from the app. The CSV contains trial rows with session
 Key fields:
 - `participantId`, `condition`, `layoutId`, `layoutIndex`
 - `isPractice` (filter out practice trials for main analysis)
+- `trialType` (`learning`, `practice`, `main`) and `learningKind` (if applicable)
 - `wpm`, `editDistance`, `elapsedMs`
+- NASA-TLX fields (per participant, repeated per trial): `tlxMental`, `tlxPhysical`, `tlxTemporal`, `tlxPerformance`, `tlxEffort`, `tlxFrustration`, `tlxOverall`
 
 ## Recommended metrics
 - Mean WPM per layout (exclude practice).
 - Mean edit distance per layout (exclude practice).
 - Error rate: editDistance / charCount.
 - Trial completion time in seconds.
+- NASA-TLX workload summary (mean per scale, overall mean).
+  - Performance scale is reversed: low = good performance, high = poor performance.
 
 ## Suggested workflow
-1. Filter `isPractice = false`.
+1. Filter out `trialType = learning`. If needed, also filter `isPractice = false`.
 2. Group by `participantId` and `layoutId`.
 3. Compute mean WPM and mean error rate.
 4. Compare layouts using paired tests if the same participants completed all layouts.

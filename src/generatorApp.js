@@ -4,8 +4,8 @@
   window.KbdStudy = window.KbdStudy || {};
   const ns = window.KbdStudy;
 
-  const DISTANCE_MODE_STORAGE_KEY = "KbdStudy.distanceMode.v1";
-  const THEORY_PARAMS = { tapTimeMs: 140, fittsAms: 50, fittsBms: 100, eps: 1e-6, useCenter: true, useEdge: true };
+  const THEORY_PARAMS = { tapTimeMs: 140, fittsAms: 50, fittsBms: 100, eps: 1e-6, useCenter: true, useEdge: false };
+  const LINEAR_PARAMS = { tapTimeMs: 140, moveMsPerUnit: 35, useCenter: true, useEdge: true };
 
   // Extra fitness shaping: penalize layouts that produce tiny keys after normalization.
   // Rationale: Shannon Fitts' ID is scale-invariant (scaling both D and W cancels), so without an
@@ -14,6 +14,13 @@
     // Keys with min(w,h) >= refDim have 0 penalty.
     refDim: 0.85,
     // Penalty added to avg ms/char for small keys: strengthMs * (1/minDim - 1/refDim).
+    strengthMs: 110,
+    eps: 1e-6,
+  };
+  const LEGACY_PIXEL_PENALTY = {
+    // Only applies to legacy scoring when a key falls below this pixel size.
+    minPx: 100,
+    // Penalty added to avg ms/char: strengthMs * (1/minPx - 1/minPxThreshold).
     strengthMs: 55,
     eps: 1e-6,
   };
@@ -28,29 +35,11 @@
     immigrantRate: 0.08,
     sizeMutationRate: 0.15,
     sizeMin: 0.8,
-    sizeMax: 1.6,
+    sizeMax: 1.3,
     maxCacheSize: 1500,
   };
 
   const INTEGER_SIZE_RANGE = { min: 1, max: 5 };
-
-  const ISLAND_DEFAULTS = {
-    initialCount: 10,
-    maxCount: 20,
-    spawnEvery: 10000,
-    minAgeEvals: 2000,
-  };
-
-  const ISLAND_LIMITS = {
-    initialMin: 1,
-    initialMax: 100,
-    maxMin: 1,
-    maxMax: 100,
-    spawnMin: 0,
-    spawnMax: 1000000,
-    minAgeMin: 0,
-    minAgeMax: 1000000,
-  };
 
   const GA_DEFAULTS = {
     eliteCount: SEARCH_PARAMS.eliteCount,
@@ -63,8 +52,16 @@
     rtrWindow: 12,
   };
 
+  const SCORING_DEFAULT = "linear";
+  const OBJECTIVE_DEFAULT = { mode: "maximize", targetWpmStandard: null, targetWpmLegacy: null };
+  const PENALTY_MODE_DEFAULT = "all";
+
   let gaLiveParams = { ...GA_DEFAULTS };
-  let distanceMode = { useCenter: true, useEdge: true };
+  let scoringModel = SCORING_DEFAULT;
+  let objectiveMode = OBJECTIVE_DEFAULT.mode;
+  let targetWpmStandard = OBJECTIVE_DEFAULT.targetWpmStandard;
+  let targetWpmLegacy = OBJECTIVE_DEFAULT.targetWpmLegacy;
+  let penaltyMode = PENALTY_MODE_DEFAULT;
   let batchInFlight = false;
 
   const cached = {
@@ -73,17 +70,16 @@
     corpus: null,
   };
 
-  let islandsMode = null; // "fixed" | "random" | "integer"
-  let nextIslandId = 1;
-  let islandSettings = { ...ISLAND_DEFAULTS };
   let lastGaStats = null;
 
   const state = {
     running: false,
     generatedTotal: 0,
     bestWpm: -Infinity,
-    islands: [],
-    nextSpawnAt: islandSettings.spawnEvery,
+    bestFitness: -Infinity,
+    bestDiff: null,
+    ga: null,
+    sizesMode: null,
     top5: [],
     lastPreviewIndex: 0,
     fatalError: null,
@@ -104,6 +100,11 @@
     return Number.isFinite(x) ? x : fallback;
   }
 
+  function parseFloatOrNull(value) {
+    const x = Number.parseFloat(String(value));
+    return Number.isFinite(x) ? x : null;
+  }
+
   function parseIntOr(value, fallback) {
     const x = Number.parseInt(String(value), 10);
     return Number.isFinite(x) ? x : fallback;
@@ -114,44 +115,166 @@
     return `${ns.metrics.roundTo(x, 2)}`;
   }
 
-  function normalizeDistanceMode(mode) {
-    const useCenter = mode?.useCenter !== undefined ? !!mode.useCenter : true;
-    const useEdge = mode?.useEdge !== undefined ? !!mode.useEdge : true;
-    if (!useCenter && !useEdge) return { useCenter: true, useEdge: false };
-    return { useCenter, useEdge };
+  function normalizeScoringModel(mode) {
+    if (mode === "linear") return "linear";
+    return mode === "custom" ? "custom" : "standard";
   }
 
-  function loadDistanceMode() {
-    try {
-      const raw = localStorage.getItem(DISTANCE_MODE_STORAGE_KEY);
-      if (!raw) return normalizeDistanceMode(null);
-      const parsed = JSON.parse(raw);
-      return normalizeDistanceMode(parsed);
-    } catch {
-      return normalizeDistanceMode(null);
+  function normalizePenaltyMode(mode) {
+    return mode === "min" ? "min" : "all";
+  }
+
+  function applyScoringModel(mode) {
+    scoringModel = normalizeScoringModel(mode);
+    return scoringModel;
+  }
+
+  function syncScoringUi() {
+    const select = document.getElementById("scoringModelSelect");
+    if (select) select.value = scoringModel;
+    const hint = document.getElementById("scoringModelHint");
+    if (hint) {
+      if (scoringModel === "linear") {
+        hint.textContent = "Legacy linear distance + digram scoring.";
+      } else if (scoringModel === "custom") {
+        hint.textContent = "Custom scoring not implemented yet.";
+      } else {
+        hint.textContent = "Standard Fitts+digram scoring.";
+      }
+      if (objectiveMode === "dual") {
+        hint.textContent += " (Ignored in dual objective.)";
+      } else {
+        hint.textContent += " (Used for Maximize/Match target.)";
+      }
     }
   }
 
-  function saveDistanceMode(mode) {
-    try {
-      localStorage.setItem(DISTANCE_MODE_STORAGE_KEY, JSON.stringify(normalizeDistanceMode(mode)));
-    } catch {
-      // ignore
+  function syncObjectiveUi() {
+    const maxEl = document.getElementById("objectiveMaximize");
+    const targetEl = document.getElementById("objectiveTarget");
+    const dualEl = document.getElementById("objectiveDual");
+    if (maxEl) maxEl.checked = objectiveMode === "maximize";
+    if (targetEl) targetEl.checked = objectiveMode === "target";
+    if (dualEl) dualEl.checked = objectiveMode === "dual";
+    const scoringSelect = document.getElementById("scoringModelSelect");
+    if (scoringSelect) scoringSelect.disabled = objectiveMode === "dual";
+    const standardInput = document.getElementById("targetWpmStandardInput");
+    const legacyInput = document.getElementById("targetWpmLegacyInput");
+    const useBothBtn = document.getElementById("targetUseQwertyBothBtn");
+    const enableStandard = objectiveMode === "dual" || (objectiveMode === "target" && scoringModel !== "linear");
+    const enableLegacy = objectiveMode === "dual" || (objectiveMode === "target" && scoringModel === "linear");
+    if (standardInput) standardInput.disabled = !enableStandard;
+    if (legacyInput) legacyInput.disabled = !enableLegacy;
+    if (useBothBtn) useBothBtn.disabled = objectiveMode !== "dual";
+    const hint = document.getElementById("objectiveHint");
+    if (hint) {
+      if (objectiveMode === "dual") {
+        hint.textContent = "Searches for layouts near both target WPMs (ignores scoring dropdown).";
+      } else if (objectiveMode === "target") {
+        hint.textContent = "Searches for layouts near the target WPM (uses scoring dropdown).";
+      } else {
+        hint.textContent = "Searches for the highest predicted WPM (uses scoring dropdown).";
+      }
+    }
+    updateTargetStatus();
+  }
+
+  function syncTargetUi() {
+    const standardInput = document.getElementById("targetWpmStandardInput");
+    const legacyInput = document.getElementById("targetWpmLegacyInput");
+    if (standardInput) {
+      standardInput.value = Number.isFinite(targetWpmStandard) ? String(ns.metrics.roundTo(targetWpmStandard, 2)) : "";
+    }
+    if (legacyInput) {
+      legacyInput.value = Number.isFinite(targetWpmLegacy) ? String(ns.metrics.roundTo(targetWpmLegacy, 2)) : "";
     }
   }
 
-  function applyDistanceMode(mode) {
-    distanceMode = normalizeDistanceMode(mode);
-    THEORY_PARAMS.useCenter = distanceMode.useCenter;
-    THEORY_PARAMS.useEdge = distanceMode.useEdge;
-    return distanceMode;
+  function updateTargetStatus() {
+    const statusEl = document.getElementById("targetWpmStatus");
+    if (!statusEl) return;
+    if (objectiveMode === "maximize") {
+      statusEl.textContent = "Only used in Match modes.";
+      return;
+    }
+    if (objectiveMode === "dual") {
+      if (Number.isFinite(targetWpmStandard) && Number.isFinite(targetWpmLegacy)) {
+        statusEl.textContent = `Targets set to ${ns.metrics.roundTo(targetWpmStandard, 2)} / ${ns.metrics.roundTo(
+          targetWpmLegacy,
+          2
+        )} wpm.`;
+      } else {
+        statusEl.textContent = "Enter standard and legacy target WPMs.";
+      }
+      return;
+    }
+    const activeTarget = scoringModel === "linear" ? targetWpmLegacy : targetWpmStandard;
+    const label = scoringModel === "linear" ? "legacy" : "standard";
+    statusEl.textContent = Number.isFinite(activeTarget)
+      ? `Target (${label}) set to ${ns.metrics.roundTo(activeTarget, 2)} wpm.`
+      : `Enter ${label} target WPM.`;
   }
 
-  function distanceModeLabel(mode) {
-    const m = normalizeDistanceMode(mode);
-    if (m.useCenter && m.useEdge) return "center+edge";
-    if (m.useCenter) return "center";
-    return "edge";
+  function applyObjectiveMode(mode) {
+    objectiveMode = mode === "dual" ? "dual" : mode === "target" ? "target" : "maximize";
+  }
+
+  function applyTargetStandardFromUi(value) {
+    targetWpmStandard = parseFloatOrNull(value);
+    updateTargetStatus();
+  }
+
+  function applyTargetLegacyFromUi(value) {
+    targetWpmLegacy = parseFloatOrNull(value);
+    updateTargetStatus();
+  }
+
+  function entryFitness(entry) {
+    if (Number.isFinite(entry?.fitness)) return entry.fitness;
+    return Number.isFinite(entry?.predictedWpm) ? entry.predictedWpm : -Infinity;
+  }
+
+  function activeTargetForSingle() {
+    return scoringModel === "linear" ? targetWpmLegacy : targetWpmStandard;
+  }
+
+  function computeFitnessSingle(predictedWpm) {
+    if (!Number.isFinite(predictedWpm)) return -Infinity;
+    if (objectiveMode === "target") {
+      const target = activeTargetForSingle();
+      if (!Number.isFinite(target)) return -Infinity;
+      return -Math.abs(predictedWpm - target);
+    }
+    return predictedWpm;
+  }
+
+  function computeFitnessDual(predictedWpmStandard, predictedWpmLegacy) {
+    if (!Number.isFinite(predictedWpmStandard) || !Number.isFinite(predictedWpmLegacy)) return -Infinity;
+    if (!Number.isFinite(targetWpmStandard) || !Number.isFinite(targetWpmLegacy)) return -Infinity;
+    const diffStandard = Math.abs(predictedWpmStandard - targetWpmStandard);
+    const diffLegacy = Math.abs(predictedWpmLegacy - targetWpmLegacy);
+    return -(diffStandard + diffLegacy);
+  }
+
+  function computeTargetDiffSingle(predictedWpm) {
+    if (objectiveMode !== "target") return null;
+    const target = activeTargetForSingle();
+    if (!Number.isFinite(target) || !Number.isFinite(predictedWpm)) return null;
+    return Math.abs(predictedWpm - target);
+  }
+
+  function computeTargetDiffStandard(predictedWpmStandard) {
+    if (!Number.isFinite(targetWpmStandard) || !Number.isFinite(predictedWpmStandard)) return null;
+    return Math.abs(predictedWpmStandard - targetWpmStandard);
+  }
+
+  function computeTargetDiffLegacy(predictedWpmLegacy) {
+    if (!Number.isFinite(targetWpmLegacy) || !Number.isFinite(predictedWpmLegacy)) return null;
+    return Math.abs(predictedWpmLegacy - targetWpmLegacy);
+  }
+
+  function distanceModeLabelForModel(model) {
+    return model === "linear" ? "center+edge" : "center";
   }
 
   function syncGaUiFromParams(params) {
@@ -187,64 +310,12 @@
     };
   }
 
-  function normalizeIslandSettings(input) {
-    const initialCount = clampInt(
-      parseIntOr(input?.initialCount, ISLAND_DEFAULTS.initialCount),
-      ISLAND_LIMITS.initialMin,
-      ISLAND_LIMITS.initialMax
-    );
-    let maxCount = clampInt(
-      parseIntOr(input?.maxCount, ISLAND_DEFAULTS.maxCount),
-      ISLAND_LIMITS.maxMin,
-      ISLAND_LIMITS.maxMax
-    );
-    if (maxCount < initialCount) maxCount = initialCount;
-    const spawnEvery = clampInt(
-      parseIntOr(input?.spawnEvery, ISLAND_DEFAULTS.spawnEvery),
-      ISLAND_LIMITS.spawnMin,
-      ISLAND_LIMITS.spawnMax
-    );
-    const minAgeEvals = clampInt(
-      parseIntOr(input?.minAgeEvals, ISLAND_DEFAULTS.minAgeEvals),
-      ISLAND_LIMITS.minAgeMin,
-      ISLAND_LIMITS.minAgeMax
-    );
-    return { initialCount, maxCount, spawnEvery, minAgeEvals };
-  }
-
-  function syncIslandUiFromSettings(settings) {
-    const next = normalizeIslandSettings(settings);
-    $("islandInitialCount").value = String(next.initialCount);
-    $("islandMaxCount").value = String(next.maxCount);
-    $("islandSpawnEvery").value = String(next.spawnEvery);
-    $("islandMinAgeEvals").value = String(next.minAgeEvals);
-  }
-
-  function readIslandUiParams() {
-    return {
-      initialCount: parseIntOr($("islandInitialCount").value, ISLAND_DEFAULTS.initialCount),
-      maxCount: parseIntOr($("islandMaxCount").value, ISLAND_DEFAULTS.maxCount),
-      spawnEvery: parseIntOr($("islandSpawnEvery").value, ISLAND_DEFAULTS.spawnEvery),
-      minAgeEvals: parseIntOr($("islandMinAgeEvals").value, ISLAND_DEFAULTS.minAgeEvals),
-    };
-  }
-
-  function applyIslandParamsFromUi() {
-    const wasRunning = state.running;
-    islandSettings = normalizeIslandSettings(readIslandUiParams());
-    syncIslandUiFromSettings(islandSettings);
-    clearAll();
-    if (wasRunning) setRunning(true);
-  }
-
   function applyGaParamsFromUi() {
     gaLiveParams = readGaUiParams();
     syncGaUiFromParams(gaLiveParams);
-    if (state.islands.length) {
-      for (const island of state.islands) {
-        if (island?.ga && typeof island.ga.setParams === "function") island.ga.setParams(gaLiveParams);
-      }
-      lastGaStats = aggregateIslandStats();
+    if (state.ga && typeof state.ga.setParams === "function") {
+      state.ga.setParams(gaLiveParams);
+      lastGaStats = state.ga.getStats ? state.ga.getStats() : null;
     }
     updateStatus();
   }
@@ -255,10 +326,8 @@
   }
 
   function resetSearch() {
-    state.islands = [];
-    state.nextSpawnAt = islandSettings.spawnEvery;
-    islandsMode = null;
-    nextIslandId = 1;
+    state.ga = null;
+    state.sizesMode = null;
     lastGaStats = null;
   }
 
@@ -281,13 +350,13 @@
     return sizesMode === "integer" ? "integer" : sizesMode === "random" ? "random" : "fixed";
   }
 
-  function createIsland(sizesMode) {
+  function createGa(sizesMode) {
     const mode = normalizeSizesMode(sizesMode);
     const includeSizes = mode !== "fixed";
     const sizeMin = mode === "integer" ? INTEGER_SIZE_RANGE.min : SEARCH_PARAMS.sizeMin;
     const sizeMax = mode === "integer" ? INTEGER_SIZE_RANGE.max : SEARCH_PARAMS.sizeMax;
     const keys = getDefaultKeys();
-    const ga = ns.geneticSearch.createSequencePairGA({
+    return ns.geneticSearch.createSequencePairGA({
       n: keys.length,
       includeSizes,
       sizeMin,
@@ -303,88 +372,18 @@
       replacementStrategy: gaLiveParams.replacementStrategy,
       rtrWindow: gaLiveParams.rtrWindow,
     });
-    const createdAt = state.generatedTotal;
-    return {
-      id: nextIslandId++,
-      ga,
-      sizesMode: mode,
-      bestEntry: null,
-      generatedTotal: 0,
-      createdAt,
-      lastImprovementAt: createdAt,
-    };
   }
 
-  function ensureIslands(sizesMode) {
+  function ensureGa(sizesMode) {
     const mode = normalizeSizesMode(sizesMode);
-    if (state.islands.length && islandsMode === mode) return;
-    islandsMode = mode;
-    state.islands = [];
-    nextIslandId = 1;
-    state.nextSpawnAt = state.generatedTotal + islandSettings.spawnEvery;
-    for (let i = 0; i < islandSettings.initialCount; i++) {
-      state.islands.push(createIsland(mode));
-    }
+    if (state.ga && state.sizesMode === mode) return;
+    state.ga = createGa(mode);
+    state.sizesMode = mode;
     lastGaStats = null;
   }
 
-  function spawnIslandIfNeeded(sizesMode) {
-    if (islandSettings.maxCount <= 1) return;
-    if (!Number.isFinite(islandSettings.spawnEvery) || islandSettings.spawnEvery <= 0) return;
-    if (!state.islands.length) return;
-    while (state.generatedTotal >= state.nextSpawnAt) {
-      state.islands.push(createIsland(sizesMode));
-      state.nextSpawnAt += islandSettings.spawnEvery;
-    }
-  }
-
-  function islandBestScore(island) {
-    const score = island?.bestEntry?.predictedWpm;
-    return Number.isFinite(score) ? score : -Infinity;
-  }
-
-  function pruneIslandsIfNeeded() {
-    if (state.islands.length <= islandSettings.maxCount) return;
-    const minAge = Math.max(0, Number(islandSettings.minAgeEvals) || 0);
-    while (state.islands.length > islandSettings.maxCount) {
-      const now = state.generatedTotal;
-      let candidates = state.islands.filter((island) => now - island.createdAt >= minAge);
-      if (!candidates.length) candidates = state.islands;
-
-      let worst = candidates[0];
-      let worstScore = islandBestScore(worst);
-      for (let i = 1; i < candidates.length; i++) {
-        const cand = candidates[i];
-        const candScore = islandBestScore(cand);
-        if (candScore < worstScore || (candScore === worstScore && cand.createdAt < worst.createdAt)) {
-          worst = cand;
-          worstScore = candScore;
-        }
-      }
-      state.islands = state.islands.filter((island) => island !== worst);
-    }
-    recomputeBestWpm();
-  }
-
-  function aggregateIslandStats() {
-    const stats = { evaluations: 0, populationSize: 0, cacheSize: 0, islands: state.islands.length };
-    for (const island of state.islands) {
-      const islandStats = island?.ga?.getStats ? island.ga.getStats() : null;
-      if (!islandStats) continue;
-      stats.evaluations += islandStats.evaluations || 0;
-      stats.populationSize += islandStats.populationSize || 0;
-      stats.cacheSize += islandStats.cacheSize || 0;
-    }
-    return stats;
-  }
-
-  function recomputeBestWpm() {
-    let best = -Infinity;
-    for (const island of state.islands) {
-      const score = island?.bestEntry?.predictedWpm;
-      if (Number.isFinite(score) && score > best) best = score;
-    }
-    state.bestWpm = best;
+  function getGaStats() {
+    return state.ga?.getStats ? state.ga.getStats() : null;
   }
 
   function clampInt(x, min, max) {
@@ -429,20 +428,43 @@
         continue;
       }
 
-      const scored = scoreLayout(layout);
-      if (!scored || !Number.isFinite(scored.predictedWpm)) {
+      const scoredStandard = scoreLayoutStandard(layout);
+      const scoredLegacy = scoreLayoutLinear(layout);
+      const primary = scoringModel === "linear" ? scoredLegacy : scoredStandard;
+      if (!primary || !Number.isFinite(primary.predictedWpm)) {
         out.push(null);
         continue;
       }
-
-      out.push({ predictedWpm: scored.predictedWpm, avgMsPerChar: scored.avgMsPerChar, layout, genome });
+      const predictedWpmStandard = scoredStandard?.predictedWpm;
+      const predictedWpmLegacy = scoredLegacy?.predictedWpm;
+      const targetDiffStandard = computeTargetDiffStandard(predictedWpmStandard);
+      const targetDiffLegacy = computeTargetDiffLegacy(predictedWpmLegacy);
+      const targetDiffCombined =
+        Number.isFinite(targetDiffStandard) && Number.isFinite(targetDiffLegacy) ? targetDiffStandard + targetDiffLegacy : null;
+      const fitness =
+        objectiveMode === "dual" ? computeFitnessDual(predictedWpmStandard, predictedWpmLegacy) : computeFitnessSingle(primary.predictedWpm);
+      const targetDiff = objectiveMode === "dual" ? targetDiffCombined : computeTargetDiffSingle(primary.predictedWpm);
+      out.push({
+        predictedWpm: primary.predictedWpm,
+        avgMsPerChar: primary.avgMsPerChar,
+        predictedWpmStandard,
+        predictedWpmLegacy,
+        avgMsPerCharStandard: scoredStandard?.avgMsPerChar,
+        avgMsPerCharLegacy: scoredLegacy?.avgMsPerChar,
+        targetDiffStandard,
+        targetDiffLegacy,
+        fitness,
+        targetDiff,
+        layout,
+        genome,
+      });
     }
     return out;
   }
 
 
   function makeDefaultKeys() {
-    // a..z, space, backspace, enter (extensible later)
+    // a..z, space, backspace (enter is fixed on the right for all layouts)
     const keys = [];
     for (let c = 97; c <= 122; c++) {
       const ch = String.fromCharCode(c);
@@ -450,7 +472,6 @@
     }
     keys.push({ id: "space", label: "Space", type: "space" });
     keys.push({ id: "backspace", label: "⌫", type: "backspace" });
-    keys.push({ id: "enter", label: "Enter", type: "enter" });
     return keys;
   }
 
@@ -473,55 +494,6 @@
       .join("");
   }
 
-  function augmentCorpusWithEnter(corpus) {
-    if (!corpus || corpus._augmented) return corpus;
-    const alphabet = String(corpus.alphabet ?? "");
-    if (!alphabet || alphabet.includes("\n")) return corpus;
-    if (!Array.isArray(corpus.countsFlat)) return corpus;
-
-    const spaceIdx = alphabet.indexOf(" ");
-    if (spaceIdx < 0) return corpus;
-
-    const K = alphabet.length;
-    const countsFlat = corpus.countsFlat;
-    if (K * K !== countsFlat.length) return corpus;
-
-    const newAlphabet = `${alphabet}\n`;
-    const newK = K + 1;
-    const newCounts = new Array(newK * newK).fill(0);
-
-    for (let a = 0; a < K; a++) {
-      for (let b = 0; b < K; b++) {
-        newCounts[a * newK + b] = countsFlat[a * K + b] || 0;
-      }
-    }
-
-    const scale = 0.2;
-    let addedTotal = 0;
-    for (let a = 0; a < K; a++) {
-      const c = countsFlat[a * K + spaceIdx] || 0;
-      if (c <= 0) continue;
-      const add = c * scale;
-      newCounts[a * newK + (newK - 1)] += add;
-      addedTotal += add;
-    }
-    for (let b = 0; b < K; b++) {
-      const c = countsFlat[spaceIdx * K + b] || 0;
-      if (c <= 0) continue;
-      const add = c * scale;
-      newCounts[(newK - 1) * newK + b] += add;
-      addedTotal += add;
-    }
-
-    return {
-      ...corpus,
-      alphabet: newAlphabet,
-      countsFlat: newCounts,
-      totalBigrams: Number(corpus.totalBigrams ?? 0) + addedTotal,
-      _augmented: true,
-    };
-  }
-
   function requireGutenbergCorpus() {
     const corpus = ns.corpus?.gutenberg;
     if (!corpus) throw new Error("Missing corpus: ns.corpus.gutenberg is not loaded");
@@ -532,49 +504,140 @@
     if (!ns.theory?.distanceLinear?.estimateLayoutFromBigramCountsFitts) {
       throw new Error("Missing scorer: ns.theory.distanceLinear.estimateLayoutFromBigramCountsFitts");
     }
-    return augmentCorpusWithEnter(corpus);
+    return corpus;
   }
 
-  function scoreLayout(layout) {
-    // Fail fast: no silent fallback. Generator requires Gutenberg bigrams.
+  function computeSizePenalty(layout) {
+    let minDim = Infinity;
+    let penaltySum = 0;
+    let penaltyCount = 0;
+    for (const k of layout.keys) {
+      const keyMin = Math.min(k.w, k.h);
+      minDim = Math.min(minDim, keyMin);
+      if (penaltyMode === "all" && keyMin > 0 && keyMin < KEY_SIZE_PENALTY.refDim) {
+        const inv = 1 / Math.max(keyMin, KEY_SIZE_PENALTY.eps);
+        const invRef = 1 / KEY_SIZE_PENALTY.refDim;
+        penaltySum += KEY_SIZE_PENALTY.strengthMs * Math.max(0, inv - invRef);
+        penaltyCount += 1;
+      }
+    }
+    if (!Number.isFinite(minDim)) minDim = 0;
+    let penaltyMs = 0;
+    if (penaltyMode === "min") {
+      if (minDim > 0 && minDim < KEY_SIZE_PENALTY.refDim) {
+        const inv = 1 / Math.max(minDim, KEY_SIZE_PENALTY.eps);
+        const invRef = 1 / KEY_SIZE_PENALTY.refDim;
+        penaltyMs = KEY_SIZE_PENALTY.strengthMs * Math.max(0, inv - invRef);
+      }
+    } else {
+      penaltyMs = penaltyCount > 0 ? penaltySum / penaltyCount : 0;
+    }
+    return { minDim, penaltyMs };
+  }
+
+  function getLayoutUnitPx(layout) {
+    const container = document.getElementById("keyboardContainer");
+    if (!container) return null;
+    const bounds = ns.layouts.getLayoutBounds(layout);
+    if (!bounds || !Number.isFinite(bounds.width) || bounds.width <= 0) return null;
+    const paddingPx = 10;
+    const usableWidthPx = Math.max(200, container.clientWidth - paddingPx * 2);
+    return usableWidthPx / bounds.width;
+  }
+
+  function computeLegacyPixelPenalty(layout) {
+    const unitPx = getLayoutUnitPx(layout);
+    if (!Number.isFinite(unitPx)) return 0;
+    let minPx = Infinity;
+    for (const k of layout.keys) {
+      const wPx = k.w * unitPx;
+      const hPx = k.h * unitPx;
+      minPx = Math.min(minPx, wPx, hPx);
+    }
+    if (!Number.isFinite(minPx) || minPx >= LEGACY_PIXEL_PENALTY.minPx) return 0;
+    const inv = 1 / Math.max(minPx, LEGACY_PIXEL_PENALTY.eps);
+    const invRef = 1 / LEGACY_PIXEL_PENALTY.minPx;
+    return LEGACY_PIXEL_PENALTY.strengthMs * Math.max(0, inv - invRef);
+  }
+
+  function scoreLayoutStandard(layout) {
     const corpus = getCorpusCached();
     const base = ns.theory.distanceLinear.estimateLayoutFromBigramCountsFitts(layout, corpus, THEORY_PARAMS);
-
-    let minDim = Infinity;
-    for (const k of layout.keys) minDim = Math.min(minDim, Math.min(k.w, k.h));
-    if (!Number.isFinite(minDim)) minDim = 0;
-
-    let penaltyMs = 0;
-    if (minDim > 0 && minDim < KEY_SIZE_PENALTY.refDim) {
-      const inv = 1 / Math.max(minDim, KEY_SIZE_PENALTY.eps);
-      const invRef = 1 / KEY_SIZE_PENALTY.refDim;
-      penaltyMs = KEY_SIZE_PENALTY.strengthMs * Math.max(0, inv - invRef);
-    }
-
+    const { minDim, penaltyMs } = computeSizePenalty(layout);
     const avgMsPerChar = (base.avgMsPerChar ?? 0) + penaltyMs;
     const predictedWpm = ns.metrics.computeWpm(1, avgMsPerChar);
     return { predictedWpm, avgMsPerChar, minKeyDim: minDim, sizePenaltyMs: penaltyMs };
   }
 
-  function rebuildLeaderboardFromIslands() {
-    const items = state.islands.map((island) => island.bestEntry).filter(Boolean);
-    items.sort((a, b) => b.predictedWpm - a.predictedWpm);
-    const selected = items.slice(0, 5);
+  function scoreLayoutLinear(layout) {
+    const corpus = getCorpusCached();
+    const base = ns.theory.distanceLinear.estimateLayoutFromBigramCounts(layout, corpus, LINEAR_PARAMS);
+    const { minDim, penaltyMs } = computeSizePenalty(layout);
+    const legacyPixelPenaltyMs = computeLegacyPixelPenalty(layout);
+    const avgMsPerChar = (base.avgMsPerChar ?? 0) + penaltyMs + legacyPixelPenaltyMs;
+    const predictedWpm = ns.metrics.computeWpm(1, avgMsPerChar);
+    return {
+      predictedWpm,
+      avgMsPerChar,
+      minKeyDim: minDim,
+      sizePenaltyMs: penaltyMs,
+      legacyPixelPenaltyMs,
+    };
+  }
 
-    const prev = state.top5;
-    const changed =
-      selected.length !== prev.length ||
-      selected.some((it, idx) => {
-        const prevIt = prev[idx];
-        return (
-          !prevIt ||
-          prevIt.signature !== it.signature ||
-          prevIt.sizesMode !== it.sizesMode ||
-          prevIt.islandId !== it.islandId
-        );
-      });
-    if (changed) state.top5 = selected;
-    return changed;
+  function scoreLayout(layout) {
+    // Fail fast: no silent fallback. Generator requires Gutenberg bigrams.
+    getCorpusCached();
+    if (scoringModel === "linear") {
+      return scoreLayoutLinear(layout);
+    }
+    if (scoringModel === "custom") {
+      return scoreLayoutStandard(layout);
+    }
+    return scoreLayoutStandard(layout);
+  }
+
+  function computeQwertyWpmStandard() {
+    const qwerty = ns.layouts.getLayoutById("qwerty");
+    if (!qwerty) return null;
+    const scored = scoreLayoutStandard(qwerty);
+    return Number.isFinite(scored?.predictedWpm) ? scored.predictedWpm : null;
+  }
+
+  function computeQwertyWpmLegacy() {
+    const qwerty = ns.layouts.getLayoutById("qwerty");
+    if (!qwerty) return null;
+    const scored = scoreLayoutLinear(qwerty);
+    return Number.isFinite(scored?.predictedWpm) ? scored.predictedWpm : null;
+  }
+
+  function updateQwertyWpm() {
+    const stdEl = document.getElementById("qwertyWpmValueStandard");
+    const legacyEl = document.getElementById("qwertyWpmValueLegacy");
+    if (!stdEl && !legacyEl) return;
+    try {
+      const wpmStandard = computeQwertyWpmStandard();
+      const wpmLegacy = computeQwertyWpmLegacy();
+      if (stdEl) stdEl.textContent = Number.isFinite(wpmStandard) ? String(ns.metrics.roundTo(wpmStandard, 2)) : "—";
+      if (legacyEl) legacyEl.textContent = Number.isFinite(wpmLegacy) ? String(ns.metrics.roundTo(wpmLegacy, 2)) : "—";
+    } catch {
+      if (stdEl) stdEl.textContent = "—";
+      if (legacyEl) legacyEl.textContent = "—";
+    }
+  }
+
+  function upsertTop5(entry) {
+    if (!entry || !entry.layout || !entry.signature) return false;
+    const idx = state.top5.findIndex((it) => it.signature === entry.signature);
+    if (idx >= 0) {
+      if (entryFitness(entry) <= entryFitness(state.top5[idx])) return false;
+      state.top5[idx] = entry;
+    } else {
+      state.top5.push(entry);
+    }
+    state.top5.sort((a, b) => entryFitness(b) - entryFitness(a));
+    if (state.top5.length > 5) state.top5 = state.top5.slice(0, 5);
+    return true;
   }
 
   function signatureOfLayout(layout) {
@@ -628,14 +691,21 @@
         updateSavePanel();
       });
 
-      const cells = [
-        idx + 1,
-        it.islandId ?? "—",
-        ns.metrics.roundTo(it.predictedWpm, 2),
-        ns.metrics.roundTo(it.avgMsPerChar, 1),
-        it.sizesMode,
-        it.generatedAt,
-      ];
+      const wpmLabel =
+        objectiveMode === "dual"
+          ? `Std ${Number.isFinite(it.predictedWpmStandard) ? ns.metrics.roundTo(it.predictedWpmStandard, 2) : "—"} / Leg ${
+              Number.isFinite(it.predictedWpmLegacy) ? ns.metrics.roundTo(it.predictedWpmLegacy, 2) : "—"
+            }${Number.isFinite(it.targetDiff) ? ` (Δ ${ns.metrics.roundTo(it.targetDiff, 2)})` : ""}`
+          : objectiveMode === "target" && Number.isFinite(it.targetDiff)
+          ? `${ns.metrics.roundTo(it.predictedWpm, 2)} (Δ ${ns.metrics.roundTo(it.targetDiff, 2)})`
+          : ns.metrics.roundTo(it.predictedWpm, 2);
+      const avgLabel =
+        objectiveMode === "dual"
+          ? `${Number.isFinite(it.avgMsPerCharStandard) ? ns.metrics.roundTo(it.avgMsPerCharStandard, 1) : "—"} / ${
+              Number.isFinite(it.avgMsPerCharLegacy) ? ns.metrics.roundTo(it.avgMsPerCharLegacy, 1) : "—"
+            }`
+          : ns.metrics.roundTo(it.avgMsPerChar, 1);
+      const cells = [idx + 1, wpmLabel, avgLabel, it.sizesMode, it.generatedAt];
       for (const c of cells) {
         const td = document.createElement("td");
         td.textContent = String(c);
@@ -672,21 +742,46 @@
       return;
     }
 
-    const scoring = `Scoring: Gutenberg bigrams (pg${corpus.bookId}) + Fitts (dist=${distanceModeLabel(distanceMode)})`;
+    updateQwertyWpm();
+
+    const scoringModelLabel =
+      objectiveMode === "dual"
+        ? "Standard+Legacy"
+        : scoringModel === "linear"
+        ? "Legacy (Linear+digram)"
+        : scoringModel === "custom"
+        ? "Custom (coming soon)"
+        : "Standard (Fitts+digram)";
+    const penaltyLabel = penaltyMode === "min" ? "min-key penalty" : "all-keys penalty";
+    const distLabel =
+      objectiveMode === "dual"
+        ? `std:${distanceModeLabelForModel("standard")}, legacy:${distanceModeLabelForModel("linear")}`
+        : distanceModeLabelForModel(scoringModel);
+    const scoring = `Scoring: ${scoringModelLabel} • Gutenberg bigrams (pg${corpus.bookId}) • dist=${distLabel} • ${penaltyLabel}`;
+    const objective =
+      objectiveMode === "dual"
+        ? `Objective: Match std ${Number.isFinite(targetWpmStandard) ? ns.metrics.roundTo(targetWpmStandard, 2) : "—"} + legacy ${
+            Number.isFinite(targetWpmLegacy) ? ns.metrics.roundTo(targetWpmLegacy, 2) : "—"
+          } wpm (best Δ ${Number.isFinite(state.bestDiff) ? ns.metrics.roundTo(state.bestDiff, 2) : "—"})`
+        : objectiveMode === "target"
+        ? `Objective: Match ${
+            Number.isFinite(activeTargetForSingle()) ? ns.metrics.roundTo(activeTargetForSingle(), 2) : "—"
+          } wpm (best Δ ${Number.isFinite(state.bestDiff) ? ns.metrics.roundTo(state.bestDiff, 2) : "—"})`
+        : "Objective: Maximize WPM";
     const search = "Search: genetic algorithm (sequence-pair)";
-    const islandInfo = `Islands: ${state.islands.length}/${islandSettings.maxCount} (init ${islandSettings.initialCount}) • Spawn: ${islandSettings.spawnEvery.toLocaleString()} • MinAge: ${islandSettings.minAgeEvals.toLocaleString()} • Batch/island: ${SEARCH_PARAMS.batchSize}`;
-    const gaExtra = lastGaStats
-      ? ` • ${islandInfo} • GA pop: ${lastGaStats.populationSize.toLocaleString()} • Cache: ${lastGaStats.cacheSize.toLocaleString()} • mut=${ns.metrics.roundTo(
+    const gaStats = lastGaStats ?? getGaStats();
+    const gaExtra = gaStats
+      ? ` • GA pop: ${gaStats.populationSize.toLocaleString()} • Cache: ${gaStats.cacheSize.toLocaleString()} • mut=${ns.metrics.roundTo(
           gaLiveParams.mutationRate,
           2
         )} imm=${ns.metrics.roundTo(gaLiveParams.immigrantRate, 2)} k=${gaLiveParams.tournamentK} elite=${gaLiveParams.eliteCount} rtr=${
           gaLiveParams.rtrWindow
-        }`
-      : ` • ${islandInfo}`;
+        } • Batch: ${SEARCH_PARAMS.batchSize}`
+      : ` • Batch: ${SEARCH_PARAMS.batchSize}`;
 
     setText(
       $("statusDetails"),
-      `${scoring} • ${search} • Generated: ${state.generatedTotal.toLocaleString()} • Best WPM: ${
+      `${scoring} • ${objective} • ${search} • Generated: ${state.generatedTotal.toLocaleString()} • Best WPM: ${
         Number.isFinite(state.bestWpm) ? ns.metrics.roundTo(state.bestWpm, 2) : "—"
       } • Top5 size: ${state.top5.length}${gaExtra}`
     );
@@ -752,6 +847,8 @@
     resetSearch();
     state.generatedTotal = 0;
     state.bestWpm = -Infinity;
+    state.bestFitness = -Infinity;
+    state.bestDiff = null;
     state.top5 = [];
     state.lastPreviewIndex = 0;
     state.fatalError = null;
@@ -767,48 +864,55 @@
     batchInFlight = true;
     try {
       const sizesMode = String($("sizeModeSelect").value ?? "fixed");
-      ensureIslands(sizesMode);
+      ensureGa(sizesMode);
       const target = getCanonicalTarget();
       const batchSize = SEARCH_PARAMS.batchSize;
-      const islands = state.islands;
-      if (!islands.length) {
+      const ga = state.ga;
+      if (!ga) {
         updateStatus();
         return;
       }
 
-      for (let i = 0; i < islands.length; i++) {
-        const count = batchSize;
-        const island = islands[i];
-        const { genomes } = island.ga.generateGenomes(count);
-        const evals = evaluateGenomesLocal(genomes, sizesMode, target);
-        const { evaluations } = island.ga.ingestEvaluations(evals);
+      const { genomes } = ga.generateGenomes(batchSize);
+      const evals = evaluateGenomesLocal(genomes, sizesMode, target);
+      const { evaluations } = ga.ingestEvaluations(evals);
 
-        for (const ev of evaluations) {
-          const predictedWpm = ev.predictedWpm;
-          state.generatedTotal += 1;
-          island.generatedTotal += 1;
+      let leaderboardChanged = false;
+      for (const ev of evaluations) {
+        const predictedWpm = ev.predictedWpm;
+        const fitness = entryFitness(ev);
+        state.generatedTotal += 1;
 
-          if (predictedWpm > state.bestWpm) state.bestWpm = predictedWpm;
-          if (!island.bestEntry || predictedWpm > island.bestEntry.predictedWpm) {
-            island.bestEntry = {
-              predictedWpm,
-              avgMsPerChar: ev.avgMsPerChar,
-              sizesMode,
-              generatedAt: nowTimeString(),
-              layout: ev.layout,
-              signature: signatureOfLayout(ev.layout),
-              islandId: island.id,
-            };
-            island.lastImprovementAt = state.generatedTotal;
-          }
+        if (Number.isFinite(predictedWpm) && predictedWpm > state.bestWpm) {
+          state.bestWpm = predictedWpm;
         }
+        if (Number.isFinite(fitness) && fitness > state.bestFitness) {
+          state.bestFitness = fitness;
+          state.bestDiff = Number.isFinite(ev.targetDiff) ? ev.targetDiff : null;
+        }
+
+        if (!ev.layout) continue;
+        const entry = {
+          predictedWpm,
+          avgMsPerChar: ev.avgMsPerChar,
+          predictedWpmStandard: ev.predictedWpmStandard,
+          predictedWpmLegacy: ev.predictedWpmLegacy,
+          avgMsPerCharStandard: ev.avgMsPerCharStandard,
+          avgMsPerCharLegacy: ev.avgMsPerCharLegacy,
+          targetDiffStandard: ev.targetDiffStandard,
+          targetDiffLegacy: ev.targetDiffLegacy,
+          fitness,
+          targetDiff: ev.targetDiff ?? null,
+          sizesMode,
+          generatedAt: nowTimeString(),
+          layout: ev.layout,
+          signature: signatureOfLayout(ev.layout),
+        };
+        if (upsertTop5(entry)) leaderboardChanged = true;
       }
 
-      spawnIslandIfNeeded(sizesMode);
-      pruneIslandsIfNeeded();
-      lastGaStats = aggregateIslandStats();
+      lastGaStats = getGaStats();
 
-      const leaderboardChanged = rebuildLeaderboardFromIslands();
       if (leaderboardChanged) {
         renderLeaderboard();
         const idx = Math.min(state.lastPreviewIndex, state.top5.length - 1);
@@ -836,10 +940,12 @@
   }
 
   function init() {
-    // Distance metric controls (persisted across pages via localStorage).
-    applyDistanceMode(loadDistanceMode());
-    $("distUseCenter").checked = distanceMode.useCenter;
-    $("distUseEdge").checked = distanceMode.useEdge;
+    applyScoringModel(SCORING_DEFAULT);
+    syncScoringUi();
+    syncTargetUi();
+    syncObjectiveUi();
+    const penaltySelect = document.getElementById("sizePenaltyModeSelect");
+    if (penaltySelect) penaltySelect.value = penaltyMode;
 
     clearAll();
 
@@ -864,26 +970,105 @@
       clearAll();
     });
 
-    const onDistanceControl = (e) => {
+
+    updateQwertyWpm();
+    updateTargetStatus();
+
+    const scoringSelect = document.getElementById("scoringModelSelect");
+    if (scoringSelect) {
+      scoringSelect.addEventListener("change", () => {
+        const wasRunning = state.running;
+        applyScoringModel(scoringSelect.value);
+        syncScoringUi();
+        syncObjectiveUi();
+        clearAll();
+        updateQwertyWpm();
+        updateTargetStatus();
+        if (wasRunning) setRunning(true);
+      });
+    }
+
+    if (penaltySelect) {
+      penaltySelect.addEventListener("change", () => {
+        const wasRunning = state.running;
+        penaltyMode = normalizePenaltyMode(penaltySelect.value);
+        clearAll();
+        updateQwertyWpm();
+        updateStatus();
+        if (wasRunning) setRunning(true);
+      });
+    }
+
+    const objectiveMax = document.getElementById("objectiveMaximize");
+    const objectiveTarget = document.getElementById("objectiveTarget");
+    const objectiveDual = document.getElementById("objectiveDual");
+    const onObjectiveChange = () => {
       const wasRunning = state.running;
-      const centerEl = $("distUseCenter");
-      const edgeEl = $("distUseEdge");
-
-      // Enforce: at least one must be enabled.
-      if (!centerEl.checked && !edgeEl.checked) {
-        if (e?.target === centerEl) centerEl.checked = true;
-        else edgeEl.checked = true;
-      }
-
-      applyDistanceMode({ useCenter: centerEl.checked, useEdge: edgeEl.checked });
-      saveDistanceMode(distanceMode);
-
-      // Scoring changed; restart to avoid mixing cached island evaluations.
+      objectiveMode = objectiveDual?.checked ? "dual" : objectiveTarget?.checked ? "target" : "maximize";
+      syncObjectiveUi();
+      syncScoringUi();
       clearAll();
       if (wasRunning) setRunning(true);
     };
-    $("distUseCenter").addEventListener("change", onDistanceControl);
-    $("distUseEdge").addEventListener("change", onDistanceControl);
+    if (objectiveMax) objectiveMax.addEventListener("change", onObjectiveChange);
+    if (objectiveTarget) objectiveTarget.addEventListener("change", onObjectiveChange);
+    if (objectiveDual) objectiveDual.addEventListener("change", onObjectiveChange);
+
+    const targetStandardInput = document.getElementById("targetWpmStandardInput");
+    if (targetStandardInput) {
+      targetStandardInput.addEventListener("input", () => {
+        applyTargetStandardFromUi(targetStandardInput.value);
+        updateStatus();
+      });
+      targetStandardInput.addEventListener("change", () => {
+        const wasRunning = state.running;
+        applyTargetStandardFromUi(targetStandardInput.value);
+        if (objectiveMode === "target" || objectiveMode === "dual") {
+          clearAll();
+          if (wasRunning) setRunning(true);
+        } else {
+          updateStatus();
+        }
+      });
+    }
+
+    const targetLegacyInput = document.getElementById("targetWpmLegacyInput");
+    if (targetLegacyInput) {
+      targetLegacyInput.addEventListener("input", () => {
+        applyTargetLegacyFromUi(targetLegacyInput.value);
+        updateStatus();
+      });
+      targetLegacyInput.addEventListener("change", () => {
+        const wasRunning = state.running;
+        applyTargetLegacyFromUi(targetLegacyInput.value);
+        if (objectiveMode === "target" || objectiveMode === "dual") {
+          clearAll();
+          if (wasRunning) setRunning(true);
+        } else {
+          updateStatus();
+        }
+      });
+    }
+
+    const targetQwertyBtn = document.getElementById("targetUseQwertyBothBtn");
+    if (targetQwertyBtn) {
+      targetQwertyBtn.addEventListener("click", () => {
+        const wpmStandard = computeQwertyWpmStandard();
+        const wpmLegacy = computeQwertyWpmLegacy();
+        if (!Number.isFinite(wpmStandard) || !Number.isFinite(wpmLegacy)) return;
+        targetWpmStandard = wpmStandard;
+        targetWpmLegacy = wpmLegacy;
+        syncTargetUi();
+        updateTargetStatus();
+        const wasRunning = state.running;
+        if (objectiveMode === "target" || objectiveMode === "dual") {
+          clearAll();
+          if (wasRunning) setRunning(true);
+        } else {
+          updateStatus();
+        }
+      });
+    }
 
     // GA live controls
     syncGaUiFromParams(gaLiveParams);
@@ -895,14 +1080,6 @@
     $("gaTournamentK").addEventListener("change", onGaControl);
     $("gaEliteCount").addEventListener("change", onGaControl);
     $("gaRtrWindow").addEventListener("change", onGaControl);
-
-    // Island controls
-    syncIslandUiFromSettings(islandSettings);
-    const onIslandControl = () => applyIslandParamsFromUi();
-    $("islandInitialCount").addEventListener("change", onIslandControl);
-    $("islandMaxCount").addEventListener("change", onIslandControl);
-    $("islandSpawnEvery").addEventListener("change", onIslandControl);
-    $("islandMinAgeEvals").addEventListener("change", onIslandControl);
 
     // Save layout to main typing page (localStorage-backed)
     $("saveLayoutBtn").addEventListener("click", () => {

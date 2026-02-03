@@ -131,6 +131,12 @@
     return `A:${a}|B:${b}|W:${w}|H:${h}`;
   }
 
+  function fitnessOf(individual) {
+    const fit = individual?.fitness;
+    if (Number.isFinite(fit)) return fit;
+    return Number.isFinite(individual?.predictedWpm) ? individual.predictedWpm : -Infinity;
+  }
+
   function deepCopyGenome(genome, includeSizes) {
     const out = {
       seqA: genome.seqA.slice(),
@@ -175,7 +181,7 @@
 
     let population = []; // sorted desc by fitness
     let populationKeys = new Set(); // genomeKey(...) to prevent duplicates occupying population slots
-    let evalCache = new Map(); // key -> { predictedWpm, avgMsPerChar, layout }
+    let evalCache = new Map(); // key -> { predictedWpm, avgMsPerChar, layout, fitness, targetDiff }
     let evaluations = 0;
 
     function eliteFloor() {
@@ -244,7 +250,7 @@
       for (let i = 0; i < k; i++) {
         const idx = randInt(0, population.length);
         const cand = population[idx];
-        if (!best || cand.predictedWpm > best.predictedWpm) best = cand;
+      if (!best || fitnessOf(cand) > fitnessOf(best)) best = cand;
       }
       return best;
     }
@@ -309,6 +315,8 @@
         predictedWpm: res.predictedWpm,
         avgMsPerChar: res.avgMsPerChar,
         layout: res.layout,
+      fitness: res.fitness,
+      targetDiff: res.targetDiff,
       };
       cacheSet(key, stored);
       return { ...stored, genome: deepCopyGenome(genome, includeSizes), cached: false, key };
@@ -355,6 +363,8 @@
             predictedWpm: ev.predictedWpm,
             avgMsPerChar: ev.avgMsPerChar,
             layout: ev.layout,
+          fitness: ev.fitness,
+          targetDiff: ev.targetDiff,
           };
           cacheSet(key, stored);
         }
@@ -368,14 +378,14 @@
       return { evaluations: out, stats: { evaluations, populationSize: population.length, cacheSize: evalCache.size, params: getParams() } };
     }
 
-    function insertIndividual(individual) {
-      // Insert into sorted population (desc by predictedWpm) with capped size.
+  function insertIndividual(individual) {
+    // Insert into sorted population (desc by fitness) with capped size.
       const key = String(individual?.key ?? genomeKey(individual.genome, includeSizes));
       if (populationKeys.has(key)) return false;
       individual.key = key;
       populationKeys.add(key);
       population.push(individual);
-      population.sort((a, b) => b.predictedWpm - a.predictedWpm);
+    population.sort((a, b) => fitnessOf(b) - fitnessOf(a));
       if (population.length > populationSize) {
         const removed = population.splice(populationSize);
         for (const it of removed) populationKeys.delete(it.key);
@@ -414,7 +424,7 @@
       if (replaceIndex > worstIndex) return false;
 
       const worstNonElite = population[worstIndex];
-      if (individual.predictedWpm <= worstNonElite.predictedWpm) return false;
+    if (fitnessOf(individual) <= fitnessOf(worstNonElite)) return false;
 
       // Replace the worst non-elite and re-sort.
       const key = String(individual?.key ?? genomeKey(individual.genome, includeSizes));
@@ -423,7 +433,7 @@
       populationKeys.add(key);
       individual.key = key;
       population[worstIndex] = individual;
-      population.sort((a, b) => b.predictedWpm - a.predictedWpm);
+    population.sort((a, b) => fitnessOf(b) - fitnessOf(a));
       return true;
     }
 
@@ -457,13 +467,13 @@
       }
 
       const competitor = population[bestIdx];
-      if (individual.predictedWpm <= competitor.predictedWpm) return false;
+    if (fitnessOf(individual) <= fitnessOf(competitor)) return false;
 
       populationKeys.delete(competitor.key);
       populationKeys.add(key);
       individual.key = key;
       population[bestIdx] = individual;
-      population.sort((a, b) => b.predictedWpm - a.predictedWpm);
+      population.sort((a, b) => fitnessOf(b) - fitnessOf(a));
       return true;
     }
 

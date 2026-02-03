@@ -8,7 +8,7 @@
     while (el.firstChild) el.removeChild(el.firstChild);
   }
 
-  function renderKeyboard(containerEl, layout, onKey) {
+  function renderKeyboard(containerEl, layout, onKey, options = {}) {
     clear(containerEl);
     if (!layout) return;
 
@@ -16,7 +16,8 @@
     const paddingPx = 10;
     const gapPx = 0;
     const usableWidthPx = Math.max(200, containerEl.clientWidth - paddingPx * 2);
-    const unitPx = usableWidthPx / bounds.width;
+    const scale = Number.isFinite(options?.scale) ? options.scale : 1;
+    const unitPx = (usableWidthPx / bounds.width) * scale;
 
     containerEl.style.height = `${Math.ceil(bounds.height * unitPx + paddingPx * 2)}px`;
 

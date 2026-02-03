@@ -111,15 +111,15 @@
             </span>
           </label>
 
-          <label class="field">
+          <label class="field" style="display: none">
             <span class="fieldLabel">
               <span class="infoInline">
                 Distance metric (scoring + diversity)
                 <span
                   class="infoIcon"
                   tabindex="0"
-                  aria-label="Affects predicted WPM scoring and Top-5 diversity."
-                  data-tip="Affects predicted WPM scoring and Top-5 diversity."
+                  aria-label="Choose center-to-center, edge-to-edge, or both."
+                  data-tip="Choose center-to-center, edge-to-edge, or both."
                   >i</span
                 >
               </span>
@@ -134,6 +134,81 @@
                 <span style="font-size: 13px; color: var(--text)">Edge-to-edge</span>
               </label>
               <span class="hint" style="margin: 0">Pick one or both.</span>
+            </span>
+          </label>
+
+          <label class="field">
+            <span class="fieldLabel">Scoring model</span>
+            <span style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap">
+              <select id="scoringModelSelect" class="select" style="height: 32px">
+                <option value="standard">Standard (Fitts + digrams)</option>
+                <option value="linear">Legacy (Linear distance + digrams)</option>
+                <option value="custom" disabled>Custom (coming soon)</option>
+              </select>
+              <span id="scoringModelHint" class="hint" style="margin: 0"></span>
+              <span class="hint" style="margin: 0">
+                QWERTY std: <span id="qwertyWpmValueStandard">—</span> wpm • legacy: <span id="qwertyWpmValueLegacy">—</span> wpm
+              </span>
+            </span>
+          </label>
+
+          <label class="field">
+            <span class="fieldLabel">Small-key penalty</span>
+            <span style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap">
+              <select id="sizePenaltyModeSelect" class="select" style="height: 32px">
+                <option value="all">All keys (average)</option>
+                <option value="min">Smallest key only</option>
+              </select>
+              <span class="hint" style="margin: 0">Controls how the penalty aggregates across keys.</span>
+            </span>
+          </label>
+
+          <label class="field">
+            <span class="fieldLabel">Objective</span>
+            <span style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap">
+              <label style="display: inline-flex; gap: 6px; align-items: center">
+                <input id="objectiveMaximize" type="radio" name="objectiveMode" value="maximize" checked />
+                <span style="font-size: 13px; color: var(--text)">Maximize WPM</span>
+              </label>
+              <label style="display: inline-flex; gap: 6px; align-items: center">
+                <input id="objectiveTarget" type="radio" name="objectiveMode" value="target" />
+                <span style="font-size: 13px; color: var(--text)">Match target WPM</span>
+              </label>
+              <label style="display: inline-flex; gap: 6px; align-items: center">
+                <input id="objectiveDual" type="radio" name="objectiveMode" value="dual" />
+                <span style="font-size: 13px; color: var(--text)">Match standard + legacy</span>
+              </label>
+              <span id="objectiveHint" class="hint" style="margin: 0"></span>
+            </span>
+          </label>
+
+          <label class="field">
+            <span class="fieldLabel">Target WPM</span>
+            <span style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap">
+              <label style="display: inline-flex; gap: 6px; align-items: center">
+                <span style="font-size: 13px; color: var(--text)">Standard</span>
+                <input
+                  id="targetWpmStandardInput"
+                  class="select"
+                  type="number"
+                  min="0"
+                  step="0.1"
+                  style="height: 32px; width: 120px"
+                />
+              </label>
+              <label style="display: inline-flex; gap: 6px; align-items: center">
+                <span style="font-size: 13px; color: var(--text)">Legacy</span>
+                <input
+                  id="targetWpmLegacyInput"
+                  class="select"
+                  type="number"
+                  min="0"
+                  step="0.1"
+                  style="height: 32px; width: 120px"
+                />
+              </label>
+              <button id="targetUseQwertyBothBtn" class="btn btnSecondary" type="button">Use QWERTY (both)</button>
+              <span id="targetWpmStatus" class="hint" style="margin: 0"></span>
             </span>
           </label>
 
@@ -200,95 +275,6 @@
             </div>
           </details>
 
-          <details style="margin-top: 10px">
-            <summary class="hint" style="cursor: pointer">
-              <span class="infoInline">
-                Island options
-                <span
-                  class="infoIcon"
-                  tabindex="0"
-                  aria-label="Configure island count, spawning, and pruning."
-                  data-tip="Configure island count, spawning, and pruning."
-                  >i</span
-                >
-              </span>
-            </summary>
-            <div class="phraseText" style="margin-top: 10px">
-              <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px">
-                <label class="field">
-                  <span class="fieldLabel">
-                    <span class="infoInline">
-                      Initial islands
-                      <span
-                        class="infoIcon"
-                        tabindex="0"
-                        aria-label="How many islands to create on start or reset."
-                        data-tip="How many islands to create on start or reset."
-                        >i</span
-                      >
-                    </span>
-                  </span>
-                  <input id="islandInitialCount" type="number" min="1" max="100" step="1" />
-                  <span class="hint" style="margin-top: 6px; display: block">Starting population count.</span>
-                </label>
-
-                <label class="field">
-                  <span class="fieldLabel">
-                    <span class="infoInline">
-                      Max islands
-                      <span
-                        class="infoIcon"
-                        tabindex="0"
-                        aria-label="Maximum islands kept; lowest-performing islands are pruned beyond this."
-                        data-tip="Maximum islands kept; lowest-performing islands are pruned beyond this."
-                        >i</span
-                      >
-                    </span>
-                  </span>
-                  <input id="islandMaxCount" type="number" min="1" max="100" step="1" />
-                  <span class="hint" style="margin-top: 6px; display: block">Upper cap for island count.</span>
-                </label>
-
-                <label class="field">
-                  <span class="fieldLabel">
-                    <span class="infoInline">
-                      Spawn every (evals)
-                      <span
-                        class="infoIcon"
-                        tabindex="0"
-                        aria-label="Spawn a new island every N evaluations; 0 disables spawning."
-                        data-tip="Spawn a new island every N evaluations; 0 disables spawning."
-                        >i</span
-                      >
-                    </span>
-                  </span>
-                  <input id="islandSpawnEvery" type="number" min="0" max="1000000" step="100" />
-                  <span class="hint" style="margin-top: 6px; display: block">0 = no new islands.</span>
-                </label>
-
-                <label class="field">
-                  <span class="fieldLabel">
-                    <span class="infoInline">
-                      Min age (evals)
-                      <span
-                        class="infoIcon"
-                        tabindex="0"
-                        aria-label="Islands younger than this are protected from pruning."
-                        data-tip="Islands younger than this are protected from pruning."
-                        >i</span
-                      >
-                    </span>
-                  </span>
-                  <input id="islandMinAgeEvals" type="number" min="0" max="1000000" step="100" />
-                  <span class="hint" style="margin-top: 6px; display: block">Younger islands are protected.</span>
-                </label>
-              </div>
-
-              <div class="hint" style="margin-top: 6px">
-                Changing island settings restarts the run.
-              </div>
-            </div>
-          </details>
         </div>
 
         <div class="phrases" style="margin-top: 10px">
@@ -405,7 +391,6 @@
             <thead>
               <tr>
                 <th>#</th>
-                <th>Island</th>
                 <th>Predicted WPM</th>
                 <th>Avg ms/char</th>
                 <th>Sizes</th>

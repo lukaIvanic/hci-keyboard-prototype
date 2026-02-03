@@ -245,7 +245,8 @@
       }
     }
 
-    return finalizeLayout({ id, name, keys: outKeys });
+    const keysWithEnter = addEnterKeyToKeys(outKeys);
+    return finalizeLayout({ id, name, keys: keysWithEnter });
   }
 
   function finalizeLayout({ id, name, keys }) {
@@ -539,6 +540,17 @@
 
   const USER_LAYOUTS_STORAGE_KEY = "KbdStudy.userLayouts.v1";
   const MAX_USER_LAYOUTS = 80;
+  const USER_LAYOUT_ID_MIGRATIONS = new Map([
+    ["user_1770153167095", "clancy_custom"],
+    ["user_1770153329211", "fits_or_something"],
+    ["user_1770153448244", "fake_qwerty"],
+  ]);
+  const USER_LAYOUT_NAME_MIGRATIONS = new Map([
+    ["clancy (custom)", "clancy_custom"],
+    ["clancy(custom)", "clancy_custom"],
+    ["fittsorsomething", "fits_or_something"],
+    ["fakeqwerty", "fake_qwerty"],
+  ]);
 
   function hasLocalStorage() {
     try {
@@ -596,6 +608,41 @@
     return { id, name, createdAtMs: Number.isFinite(createdAtMs) ? createdAtMs : 0, keys };
   }
 
+  function normalizeLayoutName(name) {
+    return String(name ?? "")
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, " ");
+  }
+
+  function migrateUserLayoutRecords(records) {
+    if (!Array.isArray(records) || records.length === 0) return records;
+    const used = new Set(records.map((rec) => rec.id));
+    let changed = false;
+    for (const rec of records) {
+      if (!rec) continue;
+      const nameKey = normalizeLayoutName(rec.name);
+      const desiredId = USER_LAYOUT_ID_MIGRATIONS.get(rec.id) ?? USER_LAYOUT_NAME_MIGRATIONS.get(nameKey);
+      if (!desiredId || rec.id === desiredId) continue;
+      if (used.has(desiredId)) {
+        console.warn(`User layout id migration skipped (conflict): ${rec.id} -> ${desiredId}`);
+        continue;
+      }
+      used.delete(rec.id);
+      rec.id = desiredId;
+      used.add(desiredId);
+      changed = true;
+    }
+    if (changed) {
+      try {
+        writeUserLayoutRecords(records);
+      } catch (err) {
+        console.warn("Failed to persist migrated user layout IDs:", err);
+      }
+    }
+    return records;
+  }
+
   function readUserLayoutRecords() {
     if (!hasLocalStorage()) return [];
     const raw = localStorage.getItem(USER_LAYOUTS_STORAGE_KEY);
@@ -643,7 +690,7 @@
   }
 
   function loadUserLayouts() {
-    const records = readUserLayoutRecords();
+    const records = migrateUserLayoutRecords(readUserLayoutRecords());
     for (const rec of records) {
       try {
         const keys = rec.keys.map((k) => makeKey(k));

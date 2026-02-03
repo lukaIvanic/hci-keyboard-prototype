@@ -18,6 +18,15 @@
     { key: "efficiency", label: "Efficiency", decimals: 2 },
   ];
 
+  const TLX_FIELDS = [
+    { key: "tlxMental", label: "Mental demand", decimals: 1 },
+    { key: "tlxPhysical", label: "Physical demand", decimals: 1 },
+    { key: "tlxTemporal", label: "Temporal demand", decimals: 1 },
+    { key: "tlxPerformance", label: "Performance", decimals: 1 },
+    { key: "tlxEffort", label: "Effort", decimals: 1 },
+    { key: "tlxFrustration", label: "Frustration", decimals: 1 },
+  ];
+
   const REQUIRED_HEADERS = [
     "layoutId",
     "participantId",
@@ -660,12 +669,15 @@
     });
 
     const practiceRows = rawRows.filter((r) => String(r.isPractice).toLowerCase() === "true").length;
+    const learningRows = rawRows.filter((r) => String(r.trialType).toLowerCase() === "learning").length;
 
     return {
       totalRows: rawRows.length,
       usedRows: analysisRows.length,
       practiceRows,
       excludedPractice: thresholds.excludePractice ? practiceRows : 0,
+      learningRows,
+      excludedLearning: learningRows,
       missing,
       duplicateTrials,
       shortTrials,
@@ -964,15 +976,121 @@
     return { overall, byLayout };
   }
 
+  function computeTlxSummary(rows, participantMeans) {
+    const participantMap = new Map();
+    rows.forEach((row) => {
+      const pid = row.participantId || "unknown";
+      if (!participantMap.has(pid)) {
+        participantMap.set(pid, { values: {}, overall: [] });
+      }
+      const entry = participantMap.get(pid);
+      TLX_FIELDS.forEach((field) => {
+        const value = toNumber(row[field.key], null);
+        if (!Number.isFinite(value)) return;
+        if (!entry.values[field.key]) entry.values[field.key] = [];
+        entry.values[field.key].push(value);
+      });
+      const overall = toNumber(row.tlxOverall, null);
+      if (Number.isFinite(overall)) entry.overall.push(overall);
+    });
+
+    const participants = [];
+    const warnings = [];
+    participantMap.forEach((entry, pid) => {
+      const participant = { participantId: pid, values: {}, overall: null };
+      let hasAny = false;
+      TLX_FIELDS.forEach((field) => {
+        const list = entry.values[field.key] || [];
+        if (!list.length) return;
+        hasAny = true;
+        const uniques = Array.from(new Set(list.map((v) => v.toFixed(2))));
+        if (uniques.length > 1) {
+          warnings.push(`NASA-TLX ${field.label} inconsistent for ${pid} (${uniques.join(", ")})`);
+        }
+        participant.values[field.key] = mean(list);
+      });
+      if (entry.overall.length) {
+        const uniques = Array.from(new Set(entry.overall.map((v) => v.toFixed(2))));
+        if (uniques.length > 1) {
+          warnings.push(`NASA-TLX overall inconsistent for ${pid} (${uniques.join(", ")})`);
+        }
+        participant.overall = mean(entry.overall);
+      } else {
+        const values = TLX_FIELDS.map((field) => participant.values[field.key]).filter(Number.isFinite);
+        if (values.length === TLX_FIELDS.length) participant.overall = mean(values);
+      }
+      if (hasAny) participants.push(participant);
+    });
+
+    if (!participants.length) {
+      return { available: false, warnings: [] };
+    }
+
+    const perScale = TLX_FIELDS.map((field) => {
+      const values = participants.map((p) => p.values[field.key]).filter(Number.isFinite);
+      const stats = meanAndCi(values);
+      return { ...field, mean: stats.mean, ci: stats.ci, n: stats.n };
+    });
+    const overallValues = participants.map((p) => p.overall).filter(Number.isFinite);
+    const overallStats = meanAndCi(overallValues);
+
+    const correlations = participantMeans
+      ? (() => {
+          const tlxOverallByParticipant = new Map(
+            participants.filter((p) => Number.isFinite(p.overall)).map((p) => [p.participantId, p.overall])
+          );
+          const tlxForWpm = [];
+          const wpmForTlx = [];
+          const tlxForErr = [];
+          const errForTlx = [];
+          participantMeans.forEach((layoutMap, pid) => {
+            const tlxOverall = tlxOverallByParticipant.get(pid);
+            if (!Number.isFinite(tlxOverall)) return;
+            const wpmVals = [];
+            const errVals = [];
+            layoutMap.forEach((metrics) => {
+              if (Number.isFinite(metrics.wpm)) wpmVals.push(metrics.wpm);
+              if (Number.isFinite(metrics.errorRate)) errVals.push(metrics.errorRate);
+            });
+            const wpmMean = mean(wpmVals);
+            const errMean = mean(errVals);
+            if (Number.isFinite(wpmMean)) {
+              tlxForWpm.push(tlxOverall);
+              wpmForTlx.push(wpmMean);
+            }
+            if (Number.isFinite(errMean)) {
+              tlxForErr.push(tlxOverall);
+              errForTlx.push(errMean);
+            }
+          });
+          return {
+            wpm: { r: pearsonCorrelation(tlxForWpm, wpmForTlx), n: wpmForTlx.length },
+            errorRate: { r: pearsonCorrelation(tlxForErr, errForTlx), n: errForTlx.length },
+          };
+        })()
+      : null;
+
+    return {
+      available: true,
+      participants: participants.length,
+      perScale,
+      overall: { mean: overallStats.mean, ci: overallStats.ci, n: overallStats.n },
+      correlations,
+      warnings,
+    };
+  }
+
   function computeAnalysisData(rows, thresholds) {
     const warnings = [];
     const layouts = [];
     const layoutSet = new Set();
     const participants = new Set();
     const trials = [];
+    const isPracticeRow = (r) => String(r.isPractice).toLowerCase() === "true";
+    const isLearningRow = (r) => String(r.trialType).toLowerCase() === "learning";
     const analysisRows = thresholds.excludePractice
-      ? rows.filter((r) => String(r.isPractice).toLowerCase() !== "true")
-      : rows;
+      ? rows.filter((r) => !isPracticeRow(r) && !isLearningRow(r))
+      : rows.filter((r) => !isLearningRow(r));
 
     analysisRows.forEach((row) => {
       const layoutId = row.layoutId || "unknown";
@@ -1039,6 +1157,7 @@
     const perLayoutParticipantMeans = computeLayoutParticipantMeans(participantMeans, layouts);
     const learningCurves = computeLearningCurves(trials, layouts);
     const dataQuality = computeDataQuality(rows, analysisRows, thresholds, layouts);
+    const tlxSummary = computeTlxSummary(rows, participantMeans);
 
     const analysis = {
       summary: {
@@ -1059,6 +1178,7 @@
     analysis.learningSummary = computeLearningSummary(analysis);
     analysis.orderEffects = computeOrderEffects(analysis);
     analysis.speedAccuracySummary = computeSpeedAccuracySummary(analysis);
+    analysis.tlxSummary = tlxSummary;
     return analysis;
   }
 
@@ -1080,6 +1200,29 @@
     `;
   }
 
+  function renderKeyFindings(summary, primary) {
+    const container = $("analysisKeyFindings");
+    if (!summary || !primary) {
+      container.textContent = "No key findings available.";
+      return;
+    }
+    const bestWpm = primary.bestWpm
+      ? `${primary.bestWpm.layoutId} (${formatNumber(primary.bestWpm.mean, 2)} WPM)`
+      : "n/a";
+    const bestErr = primary.bestErr
+      ? `${primary.bestErr.layoutId} (${formatNumber(primary.bestErr.mean, 3)})`
+      : "n/a";
+    const wpmN = primary.wpm?.stats?.nUsed ?? "n/a";
+    const errN = primary.errorRate?.stats?.nUsed ?? "n/a";
+    container.innerHTML = `
+      <div><strong>Baseline:</strong> ${primary.baseline ?? "n/a"}</div>
+      <div><strong>Best WPM:</strong> ${bestWpm}</div>
+      <div><strong>Lowest error:</strong> ${bestErr}</div>
+      <div><strong>Participants used:</strong> WPM ${wpmN}, Error ${errN}</div>
+      <div><strong>Warnings:</strong> ${summary.warnings.length}</div>
+    `;
+  }
+
   function renderWarnings(warnings) {
     const container = $("analysisWarnings");
     container.innerHTML = "";
@@ -1089,6 +1232,62 @@
       div.textContent = w;
       container.appendChild(div);
     });
+  }
+
+  function renderTlxSummary(summary) {
+    const container = $("analysisTlxSummary");
+    if (!summary || !summary.available) {
+      container.textContent = "No NASA-TLX data available.";
+      return;
+    }
+    const overall =
+      summary.overall && summary.overall.mean != null
+        ? `${summary.overall.mean.toFixed(1)}${summary.overall.ci != null ? ` ± ${summary.overall.ci.toFixed(1)}` : ""}`
+        : "n/a";
+    const wpmCorr = summary.correlations?.wpm?.r;
+    const errCorr = summary.correlations?.errorRate?.r;
+    const wpmCorrLine =
+      wpmCorr != null
+        ? `TLX vs WPM r = ${wpmCorr.toFixed(3)} (n = ${summary.correlations.wpm.n})`
+        : "TLX vs WPM r = n/a";
+    const errCorrLine =
+      errCorr != null
+        ? `TLX vs error rate r = ${errCorr.toFixed(3)} (n = ${summary.correlations.errorRate.n})`
+        : "TLX vs error rate r = n/a";
+    container.innerHTML = `
+      <div><strong>Participants with TLX:</strong> ${summary.participants}</div>
+      <div><strong>Overall TLX:</strong> ${overall}</div>
+      <div class="hint">${wpmCorrLine}</div>
+      <div class="hint">${errCorrLine}</div>
+      <div class="tableWrap" style="margin-top: 8px">
+        <table class="table tableDense">
+          <thead>
+            <tr>
+              <th>Scale</th>
+              <th>Mean ± CI</th>
+              <th>n</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${summary.perScale
+              .map(
+                (row) => `
+              <tr>
+                <td>${row.label}</td>
+                <td>${
+                  row.mean != null
+                    ? `${row.mean.toFixed(row.decimals)}${row.ci != null ? ` ± ${row.ci.toFixed(row.decimals)}` : ""}`
+                    : "n/a"
+                }</td>
+                <td>${row.n}</td>
+              </tr>
+            `
+              )
+              .join("")}
+          </tbody>
+        </table>
+      </div>
+    `;
   }
 
   function renderAnalysisTable(layouts) {
@@ -1132,6 +1331,8 @@
       <div><strong>Rows used:</strong> ${qc.usedRows}</div>
       <div><strong>Practice rows:</strong> ${qc.practiceRows}</div>
       <div><strong>Excluded practice:</strong> ${qc.excludedPractice}</div>
+      <div><strong>Learning rows:</strong> ${qc.learningRows}</div>
+      <div><strong>Excluded learning:</strong> ${qc.excludedLearning}</div>
       <div><strong>Participants:</strong> ${qc.participantCount}</div>
       <div><strong>Layouts:</strong> ${qc.layoutCount}</div>
       <div><strong>Short trials:</strong> ${qc.shortTrials}</div>
@@ -1411,6 +1612,9 @@
         );
       }
     }
+    if (analysis.tlxSummary?.warnings?.length) {
+      extraWarnings.push(...analysis.tlxSummary.warnings);
+    }
     let canPlot = true;
     if (statusEl) {
       canPlot = ensureLibraries(statusEl);
@@ -1474,10 +1678,12 @@
     const summaryForUi = { ...analysis.summary, warnings: mergedWarnings };
     renderAnalysisSummary(summaryForUi);
     renderEligibility(summaryForUi, thresholds);
+    renderKeyFindings(summaryForUi, analysis.primaryOutcomes);
     renderWarnings(mergedWarnings);
     renderAnalysisTable(analysis.summary.layouts || []);
     renderDataQuality(analysis.dataQuality);
     renderPrimaryOutcomes(analysis.primaryOutcomes);
+    renderTlxSummary(analysis.tlxSummary);
     renderLearningSummary(analysis.learningSummary);
     renderOrderSummary(analysis.orderEffects);
     renderSpeedAccuracyStats(analysis.speedAccuracySummary);
@@ -2004,11 +2210,13 @@ Generated by the study analysis tool.
       } else if (stored.summary) {
         renderAnalysisSummary(stored.summary);
         renderEligibility(stored.summary, storedThresholds);
+        renderKeyFindings(stored.summary, null);
         renderWarnings(stored.summary.warnings || []);
         renderAnalysisTable(stored.summary.layouts || []);
         renderMetricPanels(stored.layouts || []);
         renderDataQuality(null);
         renderPrimaryOutcomes(null);
+        renderTlxSummary(null);
         renderLearningSummary([]);
         renderOrderSummary(null);
         renderSpeedAccuracyStats(null);
