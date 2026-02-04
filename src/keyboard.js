@@ -20,12 +20,19 @@
     const unitPx = (usableWidthPx / bounds.width) * scale;
 
     containerEl.style.height = `${Math.ceil(bounds.height * unitPx + paddingPx * 2)}px`;
+    containerEl.style.setProperty("--kbd-key-font-size", `${Math.max(12, unitPx * 0.5)}px`);
+    document.documentElement.style.setProperty("--phrase-row-height", `${Math.max(70, unitPx * 1.8)}px`);
+    document.documentElement.style.setProperty("--phrase-font-size", `${Math.max(14, unitPx * 0.55)}px`);
+    document.documentElement.style.setProperty("--phrase-heading-size", `${Math.max(10, unitPx * 0.3)}px`);
+    document.documentElement.style.setProperty("--phrase-padding", `${Math.max(6, unitPx * 0.18)}px`);
+    document.documentElement.style.setProperty("--phrase-line-height", "1.15");
 
     for (const key of layout.keys) {
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "key";
       if (key.w > 1.25 || key.type !== "char") btn.classList.add("keyWide");
+      if (key.type === "char") btn.classList.add("keyChar");
       if (key.type === "enter") btn.classList.add("keyAction");
 
       btn.textContent = key.label;

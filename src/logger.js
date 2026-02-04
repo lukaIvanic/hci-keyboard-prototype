@@ -37,7 +37,7 @@
         this.startIfNeeded();
         const tMs = performance.now() - this._startPerfMs;
         this.events.push({ tMs, keyId, kind });
-        this.keypressCount += 1;
+        if (kind !== "miss") this.keypressCount += 1;
         if (kind === "backspace") this.backspaceCount += 1;
       },
 

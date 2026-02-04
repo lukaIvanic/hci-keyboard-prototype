@@ -6,11 +6,12 @@
 
   const DISTANCE_MODE_STORAGE_KEY = "KbdStudy.distanceMode.v1";
   const DEFAULT_PRACTICE_TRIALS = 2;
-  const DEFAULT_TRIALS_PER_LAYOUT = 10;
+  const DEFAULT_TRIALS_PER_LAYOUT = 8;
   const DEV_SKIP_LEARNING = false;
   const DEV_SHOW_SKIP_PHASE = true;
   const GOOGLE_SHEETS_WEB_APP_URL =
-    "https://script.google.com/macros/s/AKfycbytD-NEdHkHJGAHObI12TCWxzEga5m_PX4A1vmbAJrdwQXSxEQZ8SMTZvbzJ5wq7LbNeA/exec";
+    "https://script.google.com/macros/s/AKfycbyeNsTI5KyoY3Y3zbRKCuAohHnIsMfKMLdJJy9lBXb2k7Chvo9hRAXC2kKqDsSDSYSqVA/exec";
+  const AUTO_SHEETS_UPLOAD = true;
 
   const PHRASES = [
     "the quick brown fox",
@@ -29,8 +30,8 @@
   const LEARNING_BIGRAMS = ["th", "he", "in", "er", "an", "re", "on", "at", "en", "nd", "ti", "es"];
   const LEARNING_WORDS = ["the", "and", "for", "you", "not", "with"];
   const LEARNING_KIND_LABELS = {
-    "alpha-guided": "Alphabet (guided)",
-    "alpha-unguided": "Alphabet (unguided)",
+    "alpha-forward": "Alphabet (forward)",
+    "alpha-shuffled": "Alphabet (shuffled)",
     bigram: "Bigrams",
     word: "Short words",
   };
@@ -38,35 +39,31 @@
   const CSV_COLUMNS = [
     "sessionId",
     "participantId",
-    "condition",
-    "orderMode",
-    "orderSeed",
-    "layoutOrder",
-    "layoutIndex",
-    "trialIndex",
     "trialId",
     "layoutId",
-    "phraseId",
     "trialType",
     "learningKind",
-    "isPractice",
     "target",
     "typed",
     "startTimeMs",
     "endTimeMs",
     "elapsedMs",
-    "charCount",
-    "wpm",
-    "editDistance",
     "backspaceCount",
     "keypressCount",
-    "tlxMental",
-    "tlxPhysical",
-    "tlxTemporal",
-    "tlxPerformance",
-    "tlxEffort",
-    "tlxFrustration",
-    "tlxOverall",
+  ];
+
+  const DETAIL_COLUMNS = [
+    "sessionId",
+    "participantId",
+    "trialId",
+    "trialType",
+    "layoutName",
+    "layoutIndex",
+    "trialIndex",
+    "eventIndex",
+    "key",
+    "keyType",
+    "timestampMs",
   ];
 
   const EXPERIMENT_LAYOUT_IDS = ["clancy_custom", "fits_or_something", "fake_qwerty"];
@@ -99,16 +96,20 @@
     currentTrialIsPractice: false,
     practiceTrials: DEFAULT_PRACTICE_TRIALS,
     trialsPerLayout: DEFAULT_TRIALS_PER_LAYOUT,
-    orderMode: "fixed",
+    orderMode: "random",
     orderSeed: "",
     completed: false,
     awaitingPracticeChoice: false,
+    awaitingTlx: false,
     learningActive: false,
     learningQueue: [],
     learningIndex: 0,
   };
 
   let distanceMode = { useCenter: true, useEdge: true };
+  let sheetUploadInFlight = false;
+  let sheetUploadQueued = false;
+  let lastUploadedIndex = 0;
 
   function $(id) {
     const el = document.getElementById(id);
@@ -206,16 +207,14 @@
       sessionId: createSessionId(),
       participantId: "",
       condition: "",
-      orderMode: "fixed",
+      orderMode: "random",
       orderSeed: "",
       layoutOrder: [],
       practiceTrials: DEFAULT_PRACTICE_TRIALS,
       trialsPerLayout: DEFAULT_TRIALS_PER_LAYOUT,
       startedAtMs: null,
       endedAtMs: null,
-      tlx: createEmptyTlx(),
-      tlxOverall: null,
-      tlxSavedAtMs: null,
+      tlxByLayout: {},
     };
   }
 
@@ -271,13 +270,21 @@
         console.warn(`Missing experiment layouts: ${missing.join(", ")}`);
       }
     }
-    return allowed.length ? allowed : layouts.map((l) => l.id);
+    const base = allowed.length ? allowed : layouts.map((l) => l.id);
+    const mode = String(orderMode || "").toLowerCase();
+    if (mode === "random") {
+      return shuffleArray(base);
+    }
+    if (mode === "seeded" && seedText) {
+      return seededShuffle(base, seedText);
+    }
+    return base;
   }
 
   function readExperimentSettings() {
     const participantId = String($("experimentParticipantId").value ?? "").trim();
     const condition = "";
-    const orderMode = "fixed";
+    const orderMode = "random";
     const orderSeed = "";
     const practiceTrials = DEFAULT_PRACTICE_TRIALS;
     const trialsPerLayout = DEFAULT_TRIALS_PER_LAYOUT;
@@ -287,13 +294,10 @@
 
   function buildLearningQueue() {
     const queue = [];
-    LEARNING_ALPHABET.forEach((ch, idx) => {
-      queue.push({ kind: "alpha-guided", target: ch, highlight: true, index: idx + 1, total: LEARNING_ALPHABET.length });
-    });
-    const shuffled = shuffleArray(LEARNING_ALPHABET);
-    shuffled.forEach((ch, idx) => {
-      queue.push({ kind: "alpha-unguided", target: ch, highlight: false, index: idx + 1, total: shuffled.length });
-    });
+    const alphabet = LEARNING_ALPHABET.join("");
+    queue.push({ kind: "alpha-forward", target: alphabet, highlight: false, index: 1, total: 1 });
+    const shuffled = shuffleArray(LEARNING_ALPHABET).join("");
+    queue.push({ kind: "alpha-shuffled", target: shuffled, highlight: false, index: 1, total: 1 });
     LEARNING_BIGRAMS.forEach((pair, idx) => {
       queue.push({ kind: "bigram", target: pair, highlight: false, index: idx + 1, total: LEARNING_BIGRAMS.length });
     });
@@ -322,7 +326,6 @@
       experiment.learningActive = false;
       experiment.learningQueue = [];
       experiment.learningIndex = 0;
-      clearLearningHighlight();
       resetPracticeForLayout();
       return;
     }
@@ -331,14 +334,12 @@
     experiment.learningActive = experiment.learningQueue.length > 0;
     experiment.currentTrialIsPractice = false;
     experiment.practiceRemaining = 0;
-    applyLearningHighlight();
   }
 
   function completeLearningPhase() {
     experiment.learningActive = false;
     experiment.learningQueue = [];
     experiment.learningIndex = 0;
-    clearLearningHighlight();
     resetPracticeForLayout();
   }
 
@@ -375,18 +376,22 @@
     return item ? item.kind : "";
   }
 
-  function clearLearningHighlight() {
-    document.querySelectorAll(".keyTarget").forEach((el) => el.classList.remove("keyTarget"));
-  }
-
-  function applyLearningHighlight() {
-    clearLearningHighlight();
-    const item = currentLearningItem();
-    if (!item || !item.highlight) return;
-    const container = document.getElementById("keyboardContainer");
-    if (!container) return;
-    const keyEl = container.querySelector(`[data-key-id="${item.target}"]`);
-    if (keyEl) keyEl.classList.add("keyTarget");
+  function computeTargetProgress(target, typed) {
+    const targetNorm = String(target ?? "").toLowerCase();
+    const typedNorm = String(typed ?? "").toLowerCase();
+    const minLen = Math.min(targetNorm.length, typedNorm.length);
+    let mismatchIndex = -1;
+    for (let i = 0; i < minLen; i++) {
+      if (targetNorm[i] !== typedNorm[i]) {
+        mismatchIndex = i;
+        break;
+      }
+    }
+    if (mismatchIndex === -1 && typedNorm.length > targetNorm.length) {
+      mismatchIndex = targetNorm.length;
+    }
+    const correctPrefixLen = mismatchIndex === -1 ? minLen : mismatchIndex;
+    return { correctPrefixLen, mismatchIndex };
   }
 
   function newTrialLog() {
@@ -416,8 +421,28 @@
   }
 
   function renderTarget() {
-    setText($("targetPhrase"), currentTargetPhrase());
-    applyLearningHighlight();
+    const targetEl = $("targetPhrase");
+    const target = currentTargetPhrase();
+    const typed = state.typed || "";
+    const progress = computeTargetProgress(target, typed);
+    const correctPrefixLen = progress.correctPrefixLen;
+    const mismatchIndex = progress.mismatchIndex;
+
+    targetEl.innerHTML = "";
+    for (let i = 0; i < target.length; i++) {
+      const span = document.createElement("span");
+      span.className = "targetChar";
+      if (i < correctPrefixLen) {
+        span.classList.add("targetCharDone");
+      } else if (mismatchIndex !== -1 && i === mismatchIndex && mismatchIndex < target.length) {
+        span.classList.add("targetCharError");
+      } else if (mismatchIndex === -1 && i === correctPrefixLen && correctPrefixLen < target.length) {
+        span.classList.add("targetCharCurrent");
+      }
+      const ch = target[i];
+      span.textContent = ch === " " ? "\u00A0" : ch;
+      targetEl.appendChild(span);
+    }
   }
 
   function renderTyped() {
@@ -425,6 +450,7 @@
   }
 
   function handleLearningKeyPress(key) {
+    if (tlxModalOpen || experiment.awaitingTlx) return;
     if (!state.currentTrial) state.currentTrial = newTrialLog();
 
     state.currentTrial.logKey(key.id, key.type);
@@ -446,6 +472,7 @@
     const typingActive = state.typed.length > 0;
     setTypingStatus(typingActive ? "Learning..." : "Learning phase.", typingActive ? "typing" : "ready");
     renderTyped();
+    renderTarget();
 
     if (state.typed.toLowerCase() === targetNorm) {
       submitLearningTrial();
@@ -453,6 +480,7 @@
   }
 
   function handleKeyPress(key) {
+    if (tlxModalOpen || experiment.awaitingTlx) return;
     if (isLearningPhase()) {
       handleLearningKeyPress(key);
       return;
@@ -476,6 +504,13 @@
     const typingActive = state.typed.length > 0;
     setTypingStatus(typingActive ? "Typing..." : "Ready to type.", typingActive ? "typing" : "ready");
     renderTyped();
+    renderTarget();
+  }
+
+  function handleKeyMiss() {
+    const trial = state.currentTrial;
+    if (!trial || trial.startTimeMs == null) return;
+    trial.logKey("", "miss");
   }
 
   function formatSeconds(ms) {
@@ -488,6 +523,136 @@
     return values.reduce((sum, v) => sum + v, 0) / values.length;
   }
 
+  function currentLayoutName() {
+    const layout = currentLayout();
+    if (layout && layout.name) return layout.name;
+    return state.layoutId;
+  }
+
+  function layoutNameForId(layoutId) {
+    const layout = ns.layouts.getLayoutById(layoutId);
+    if (layout && layout.name) return layout.name;
+    return layoutId ?? "";
+  }
+
+  function buildTlxSheetPayload(values) {
+    const meta = state.sessionMeta || createSessionMeta();
+    const columns = [
+      "sessionId",
+      "participantId",
+      "layoutName",
+      "layoutIndex",
+      "tlxMental",
+      "tlxPhysical",
+      "tlxTemporal",
+      "tlxPerformance",
+      "tlxEffort",
+      "tlxFrustration",
+    ];
+    const layoutIndex = experiment.layoutIndex + 1;
+    const row = {
+      sessionId: meta.sessionId ?? "",
+      participantId: meta.participantId ?? "",
+      layoutName: currentLayoutName(),
+      layoutIndex,
+      tlxMental: values.tlxMental ?? "",
+      tlxPhysical: values.tlxPhysical ?? "",
+      tlxTemporal: values.tlxTemporal ?? "",
+      tlxPerformance: values.tlxPerformance ?? "",
+      tlxEffort: values.tlxEffort ?? "",
+      tlxFrustration: values.tlxFrustration ?? "",
+    };
+    return {
+      kind: "tlx",
+      sheet: "TLX",
+      exportedAtMs: Date.now(),
+      session: meta,
+      columns,
+      rows: [columns.map((col) => row[col])],
+    };
+  }
+
+  async function sendTlxToGoogleSheets(values) {
+    const url = String(GOOGLE_SHEETS_WEB_APP_URL || "").trim();
+    if (!url) {
+      return false;
+    }
+    const payload = buildTlxSheetPayload(values);
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      const data = await res.json().catch(() => ({}));
+      if (data && data.ok) {
+        return true;
+      }
+      return false;
+    } catch (err) {
+      return false;
+    }
+  }
+
+  function ensureTlxByLayout(meta) {
+    if (!meta.tlxByLayout || typeof meta.tlxByLayout !== "object") {
+      meta.tlxByLayout = {};
+    }
+    return meta.tlxByLayout;
+  }
+
+  function getTlxForLayout(layoutId) {
+    if (!layoutId) return null;
+    const meta = state.sessionMeta;
+    if (!meta) return null;
+    const map = ensureTlxByLayout(meta);
+    return map[layoutId] || null;
+  }
+
+  function resetTlxInputs() {
+    TLX_FIELDS.forEach((field) => {
+      const input = document.getElementById(field.key);
+      const output = document.getElementById(`${field.key}Value`);
+      if (input) {
+        input.value = "50";
+        input.dataset.touched = "false";
+        input.classList.add("tlxSliderUntouched");
+      }
+      if (output) {
+        output.textContent = "—";
+        output.classList.add("tlxValueEmpty");
+      }
+    });
+  }
+
+  function fillTlxInputs(values) {
+    TLX_FIELDS.forEach((field) => {
+      const input = document.getElementById(field.key);
+      const output = document.getElementById(`${field.key}Value`);
+      const raw = values?.[field.key];
+      const nextValue = Number.isFinite(raw) ? String(raw) : "50";
+      if (input) {
+        input.value = nextValue;
+        input.dataset.touched = "true";
+        input.classList.remove("tlxSliderUntouched");
+      }
+      if (output) {
+        output.textContent = nextValue;
+        output.classList.remove("tlxValueEmpty");
+      }
+    });
+  }
+
+  function allTlxSelected() {
+    return TLX_FIELDS.every((field) => {
+      const input = document.getElementById(field.key);
+      return input && input.dataset.touched === "true";
+    });
+  }
+
   function readTlxInputs() {
     const values = {};
     let ok = true;
@@ -497,43 +662,100 @@
       if (!Number.isFinite(raw)) ok = false;
       values[field.key] = Number.isFinite(raw) ? raw : null;
     });
+    if (!allTlxSelected()) ok = false;
     return { values, ok };
   }
 
-  function setTlxSaved(values) {
+  function setTlxSaved(values, layoutId) {
+    if (!layoutId) return;
     const meta = state.sessionMeta || createSessionMeta();
-    meta.tlx = values;
-    meta.tlxOverall = computeTlxOverall(values);
-    meta.tlxSavedAtMs = Date.now();
+    const map = ensureTlxByLayout(meta);
+    map[layoutId] = {
+      values,
+      overall: computeTlxOverall(values),
+      savedAtMs: Date.now(),
+    };
     state.sessionMeta = meta;
   }
 
-  function clearTlxSaved() {
+  function clearTlxSaved(layoutId) {
     const meta = state.sessionMeta || createSessionMeta();
-    meta.tlx = createEmptyTlx();
-    meta.tlxOverall = null;
-    meta.tlxSavedAtMs = null;
+    const map = ensureTlxByLayout(meta);
+    if (layoutId && map[layoutId]) {
+      delete map[layoutId];
+    }
     state.sessionMeta = meta;
   }
 
   function updateTlxStatus() {
-    const panel = document.getElementById("tlxPanel");
     const statusEl = document.getElementById("tlxStatus");
-    if (!panel || !statusEl) return;
-    if (!experiment.completed) {
-      panel.classList.remove("requiredField");
-      statusEl.textContent = "Complete after the session ends.";
-      return;
+    if (!statusEl) return;
+    statusEl.textContent = "";
+  }
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // Font testing controls (dev)
+  // ────────────────────────────────────────────────────────────────────────────
+
+  const FONT_STORAGE_KEY = "kbdFontSettings";
+
+  function loadFontSettings() {
+    try {
+      const saved = localStorage.getItem(FONT_STORAGE_KEY);
+      if (saved) return JSON.parse(saved);
+    } catch (e) {
+      /* ignore */
     }
-    const savedAt = state.sessionMeta?.tlxSavedAtMs;
-    if (!savedAt) {
-      panel.classList.add("requiredField");
-      statusEl.textContent = "Not saved yet. Please complete NASA-TLX before export.";
-      return;
+    return { family: "Inter", weight: "700", uppercase: true };
+  }
+
+  function saveFontSettings(settings) {
+    try {
+      localStorage.setItem(FONT_STORAGE_KEY, JSON.stringify(settings));
+    } catch (e) {
+      /* ignore */
     }
-    panel.classList.remove("requiredField");
-    const overall = state.sessionMeta?.tlxOverall;
-    statusEl.textContent = `Saved${overall != null ? ` (overall ${overall.toFixed(1)})` : ""}.`;
+  }
+
+  function applyFontSettings(settings) {
+    const root = document.documentElement;
+    root.style.setProperty("--kbd-font-family", settings.family === "inherit" ? "inherit" : `"${settings.family}"`);
+    root.style.setProperty("--kbd-font-weight", settings.weight);
+    root.style.setProperty("--kbd-char-transform", settings.uppercase ? "uppercase" : "lowercase");
+  }
+
+  function initFontControls() {
+    const fontSelect = document.getElementById("kbdFontSelect");
+    const weightSelect = document.getElementById("kbdWeightSelect");
+    const uppercaseToggle = document.getElementById("kbdUppercaseToggle");
+
+    if (!fontSelect || !weightSelect || !uppercaseToggle) return;
+
+    // Load saved settings
+    const settings = loadFontSettings();
+
+    // Set initial values
+    fontSelect.value = settings.family;
+    weightSelect.value = settings.weight;
+    uppercaseToggle.checked = settings.uppercase;
+
+    // Apply on load
+    applyFontSettings(settings);
+
+    // Update on change
+    const handleChange = () => {
+      const newSettings = {
+        family: fontSelect.value,
+        weight: weightSelect.value,
+        uppercase: uppercaseToggle.checked,
+      };
+      applyFontSettings(newSettings);
+      saveFontSettings(newSettings);
+    };
+
+    fontSelect.addEventListener("change", handleChange);
+    weightSelect.addEventListener("change", handleChange);
+    uppercaseToggle.addEventListener("change", handleChange);
   }
 
   function initTlx() {
@@ -544,42 +766,52 @@
       const output = document.getElementById(`${field.key}Value`);
       if (!input) return;
       const update = () => {
-        if (output) output.textContent = String(input.value);
+        input.dataset.touched = "true";
+        input.classList.remove("tlxSliderUntouched");
+        if (output) {
+          output.textContent = String(input.value);
+          output.classList.remove("tlxValueEmpty");
+        }
+        const saveBtn = document.getElementById("tlxSaveBtn");
+        if (saveBtn) saveBtn.disabled = !allTlxSelected();
       };
       input.addEventListener("input", update);
-      update();
     });
     const saveBtn = document.getElementById("tlxSaveBtn");
     if (saveBtn) {
+      saveBtn.disabled = true;
       saveBtn.addEventListener("click", () => {
+        const layoutId = tlxLayoutIdPending;
+        if (!layoutId) return;
         const { values, ok } = readTlxInputs();
         if (!ok) {
           const statusEl = document.getElementById("tlxStatus");
           if (statusEl) statusEl.textContent = "Please rate all six dimensions.";
           return;
         }
-        setTlxSaved(values);
+        setTlxSaved(values, layoutId);
         updateTlxStatus();
+        sendTlxToGoogleSheets(values);
+        closeTlxModal();
+        completeLayoutAfterTlx();
       });
     }
     const clearBtn = document.getElementById("tlxClearBtn");
     if (clearBtn) {
       clearBtn.addEventListener("click", () => {
-        TLX_FIELDS.forEach((field) => {
-          const input = document.getElementById(field.key);
-          const output = document.getElementById(`${field.key}Value`);
-          if (input) input.value = "50";
-          if (output) output.textContent = "50";
-        });
-        clearTlxSaved();
+        const layoutId = tlxLayoutIdPending;
+        resetTlxInputs();
+        if (layoutId) clearTlxSaved(layoutId);
         updateTlxStatus();
+        const saveBtn = document.getElementById("tlxSaveBtn");
+        if (saveBtn) saveBtn.disabled = true;
       });
     }
     updateTlxStatus();
   }
 
   function completeTrial({ advancePhrase = true, advanceExperiment = true, showSummary = true } = {}) {
-    if (wizardModalOpen) return;
+    if (wizardModalOpen || tlxModalOpen || experiment.awaitingTlx) return;
     if (experiment.running && experiment.awaitingPracticeChoice) return;
     const trial = state.currentTrial;
     if (!trial) return;
@@ -614,6 +846,8 @@
 
     state.session.addTrial(trial);
     appendResultRow(trial);
+    queueAutoSheetsUpload();
+    sendDetailsToGoogleSheets(trial);
     if (showSummary) {
       showToast(`Submitted • WPM ${ns.metrics.roundTo(wpm, 1)} • ED ${ed ?? 0}`);
     }
@@ -634,39 +868,20 @@
   }
 
   function trialToRow(trial) {
-    const meta = state.sessionMeta || createSessionMeta();
     return {
       sessionId: trial.sessionId ?? "",
       participantId: trial.participantId ?? "",
-      condition: trial.condition ?? "",
-      orderMode: trial.orderMode ?? "",
-      orderSeed: trial.orderSeed ?? "",
-      layoutOrder: trial.layoutOrder ?? "",
-      layoutIndex: trial.layoutIndex ?? 0,
-      trialIndex: trial.trialIndex ?? 0,
       trialId: trial.trialId,
       layoutId: trial.layoutId,
-      phraseId: trial.phraseId,
       trialType: trial.trialType ?? "",
       learningKind: trial.learningKind ?? "",
-      isPractice: trial.isPractice ?? false,
       target: trial.target,
       typed: trial.typed,
       startTimeMs: trial.startTimeMs,
       endTimeMs: trial.endTimeMs,
       elapsedMs: Math.round(trial.elapsedMs ?? 0),
-      charCount: trial.charCount ?? (trial.typed ? trial.typed.length : 0),
-      wpm: ns.metrics.roundTo(trial.wpm ?? 0, 2),
-      editDistance: trial.editDistance ?? "",
       backspaceCount: trial.backspaceCount ?? 0,
       keypressCount: trial.keypressCount ?? (trial.events ? trial.events.length : 0),
-      tlxMental: meta.tlx?.tlxMental ?? "",
-      tlxPhysical: meta.tlx?.tlxPhysical ?? "",
-      tlxTemporal: meta.tlx?.tlxTemporal ?? "",
-      tlxPerformance: meta.tlx?.tlxPerformance ?? "",
-      tlxEffort: meta.tlx?.tlxEffort ?? "",
-      tlxFrustration: meta.tlx?.tlxFrustration ?? "",
-      tlxOverall: meta.tlxOverall ?? "",
     };
   }
 
@@ -697,6 +912,9 @@
   function clearResults() {
     state.session.clear();
     $("resultsTableBody").innerHTML = "";
+    sheetUploadInFlight = false;
+    sheetUploadQueued = false;
+    lastUploadedIndex = 0;
   }
 
   function downloadCsv() {
@@ -718,9 +936,7 @@
       trialsPerLayout: meta.trialsPerLayout ?? DEFAULT_TRIALS_PER_LAYOUT,
       startedAtMs: meta.startedAtMs ?? null,
       endedAtMs: meta.endedAtMs ?? null,
-      tlx: meta.tlx ?? createEmptyTlx(),
-      tlxOverall: meta.tlxOverall ?? null,
-      tlxSavedAtMs: meta.tlxSavedAtMs ?? null,
+      tlxByLayout: meta.tlxByLayout ?? {},
       environment: {
         userAgent: navigator.userAgent,
         viewport: { width: window.innerWidth, height: window.innerHeight },
@@ -739,8 +955,8 @@
     ns.exporting.downloadJson(filename, raw);
   }
 
-  function buildSheetPayload() {
-    const rows = state.session.trials.map(trialToRow);
+  function buildSheetPayload(trials = state.session.trials) {
+    const rows = trials.map(trialToRow);
     const columns = CSV_COLUMNS.slice();
     return {
       exportedAtMs: Date.now(),
@@ -750,22 +966,46 @@
     };
   }
 
-  async function sendToGoogleSheets() {
+  function buildDetailRows(trial) {
+    if (!trial || !Array.isArray(trial.events) || !trial.events.length) return [];
+    const timestampBase = trial.startTimeMs ?? null;
+    return trial.events.map((event, index) => ({
+      sessionId: trial.sessionId ?? "",
+      participantId: trial.participantId ?? "",
+      trialId: trial.trialId,
+      trialType: trial.trialType ?? "",
+      layoutName: layoutNameForId(trial.layoutId ?? ""),
+      layoutIndex: trial.layoutIndex ?? "",
+      trialIndex: trial.trialIndex ?? "",
+      eventIndex: index + 1,
+      key: event.keyId ?? "",
+      keyType: event.kind ?? "",
+      timestampMs:
+        timestampBase == null || typeof event.tMs !== "number"
+          ? ""
+          : Math.round(timestampBase + event.tMs),
+    }));
+  }
+
+  async function sendDetailsToGoogleSheets(trial) {
+    if (!AUTO_SHEETS_UPLOAD) return false;
     const url = String(GOOGLE_SHEETS_WEB_APP_URL || "").trim();
-    if (!url) {
-      setSheetStatus("Add your Apps Script URL in GOOGLE_SHEETS_WEB_APP_URL to enable uploads.");
-      return;
-    }
+    if (!url) return false;
 
-    const payload = buildSheetPayload();
-    if (!payload.rows.length) {
-      setSheetStatus("No trials to upload yet.");
-      return;
-    }
+    const rows = buildDetailRows(trial);
+    if (!rows.length) return false;
 
-    const participantId = String(payload.session?.participantId ?? "").trim();
-    const warningPrefix = participantId ? "" : "Participant ID is empty; sending to the 'Unknown' sheet. ";
-    setSheetStatus(`${warningPrefix}Sending results to Google Sheets...`);
+    const session = state.sessionMeta || createSessionMeta();
+    const participantId = String(session?.participantId ?? "").trim();
+    const sheet = `${participantId || "Unknown"}_details`;
+    const payload = {
+      kind: "details",
+      sheet,
+      session,
+      columns: DETAIL_COLUMNS.slice(),
+      rows: rows.map((row) => DETAIL_COLUMNS.map((col) => row[col])),
+    };
+
     try {
       await fetch(url, {
         method: "POST",
@@ -773,16 +1013,92 @@
         headers: { "Content-Type": "text/plain;charset=utf-8" },
         body: JSON.stringify(payload),
       });
-      setSheetStatus("Sent. Check your sheet to confirm the new rows.");
+      return true;
+    } catch (err) {
+      return false;
+    }
+  }
+
+  async function sendTrialsToGoogleSheets(trials, options = {}) {
+    const { auto = false } = options;
+    const url = String(GOOGLE_SHEETS_WEB_APP_URL || "").trim();
+    if (!url) {
+      if (!auto) {
+        setSheetStatus("Add your Apps Script URL in GOOGLE_SHEETS_WEB_APP_URL to enable uploads.");
+      }
+      return false;
+    }
+
+    const payload = buildSheetPayload(trials);
+    if (!payload.rows.length) {
+      if (!auto) setSheetStatus("No trials to upload yet.");
+      return false;
+    }
+
+    const participantId = String(payload.session?.participantId ?? "").trim();
+    const warningPrefix = participantId ? "" : "Participant ID is empty; sending to the 'Unknown' sheet. ";
+    const verb = auto ? "Auto-sending" : "Sending results";
+    setSheetStatus(`${warningPrefix}${verb} to Google Sheets...`);
+    try {
+      await fetch(url, {
+        method: "POST",
+        mode: "no-cors",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify(payload),
+      });
+      if (auto) {
+        const count = payload.rows.length;
+        setSheetStatus(`Auto-sent ${count} new trial${count === 1 ? "" : "s"} to Google Sheets.`);
+      } else {
+        setSheetStatus("Sent. Check your sheet to confirm the new rows.");
+      }
+      return true;
     } catch (err) {
       setSheetStatus(`Send failed: ${err instanceof Error ? err.message : err}`);
+      return false;
     }
+  }
+
+  async function sendToGoogleSheets() {
+    await sendTrialsToGoogleSheets(state.session.trials, { auto: false });
+  }
+
+  function queueAutoSheetsUpload() {
+    if (!AUTO_SHEETS_UPLOAD) return;
+    const url = String(GOOGLE_SHEETS_WEB_APP_URL || "").trim();
+    if (!url) return;
+    if (sheetUploadInFlight) {
+      sheetUploadQueued = true;
+      return;
+    }
+
+    const startIndex = lastUploadedIndex;
+    const endIndex = state.session.trials.length;
+    const newTrials = state.session.trials.slice(startIndex, endIndex);
+    if (!newTrials.length) return;
+
+    sheetUploadInFlight = true;
+    sendTrialsToGoogleSheets(newTrials, { auto: true })
+      .then((ok) => {
+        if (ok) {
+          lastUploadedIndex = endIndex;
+        }
+      })
+      .finally(() => {
+        sheetUploadInFlight = false;
+        if (sheetUploadQueued) {
+          sheetUploadQueued = false;
+          queueAutoSheetsUpload();
+        }
+      });
   }
 
   function renderKeyboard() {
     const container = $("keyboardContainer");
     ns.keyboard.renderKeyboard(container, currentLayout(), handleKeyPress);
-    applyLearningHighlight();
+    container.dataset.stickyHighlight = "true";
+    markFocusArea(container);
+    markNextAction(container);
   }
 
   function renderLayoutSelect() {
@@ -895,11 +1211,14 @@
   let wizardIntroShown = false;
   let wizardModalOpen = false;
   let practiceModalOpen = false;
+  let tlxModalOpen = false;
   let wizardModalCallback = null;
   let wizardModalButton = null;
+  let tlxLayoutIdPending = null;
 
   function clearGuidanceHighlights() {
     document.querySelectorAll(`.${HIGHLIGHT_CLASSES.join(", .")}`).forEach((el) => {
+      if (el.dataset && el.dataset.stickyHighlight === "true") return;
       HIGHLIGHT_CLASSES.forEach((cls) => el.classList.remove(cls));
     });
   }
@@ -932,7 +1251,7 @@
   }
 
   function syncModalOpenState() {
-    const open = practiceModalOpen || wizardModalOpen;
+    const open = practiceModalOpen || wizardModalOpen || tlxModalOpen;
     document.body.classList.toggle("modalOpen", open);
   }
 
@@ -1048,6 +1367,13 @@
     $("experimentSkipBtn").disabled = flag || !experiment.running;
   }
 
+  function setAwaitingTlx(flag) {
+    experiment.awaitingTlx = flag;
+    const submitBtn = $("submitTrialBtn");
+    submitBtn.disabled = flag;
+    $("experimentSkipBtn").disabled = flag || !experiment.running;
+  }
+
   function resetPracticeForLayout() {
     const total = experiment.practiceTrials;
     experiment.practiceRemaining = total;
@@ -1070,6 +1396,42 @@
     setAwaitingPracticeChoice(false);
   }
 
+  function openTlxModal(layoutId) {
+    const modal = $("tlxModal");
+    const titleEl = document.getElementById("tlxModalTitle");
+    const subtitleEl = document.getElementById("tlxModalSubtitle");
+    tlxLayoutIdPending = layoutId;
+    if (titleEl) titleEl.textContent = "Form";
+    if (subtitleEl) subtitleEl.textContent = "These questions are only about the most recent keyboard you used.";
+    const saved = getTlxForLayout(layoutId);
+    if (saved && saved.values) {
+      fillTlxInputs(saved.values);
+      const saveBtn = document.getElementById("tlxSaveBtn");
+      if (saveBtn) saveBtn.disabled = false;
+    } else {
+      resetTlxInputs();
+      const saveBtn = document.getElementById("tlxSaveBtn");
+      if (saveBtn) saveBtn.disabled = true;
+    }
+    updateTlxStatus();
+    modal.hidden = false;
+    tlxModalOpen = true;
+    syncModalOpenState();
+    setAwaitingTlx(true);
+    clearGuidanceHighlights();
+    markNextAction($("tlxSaveBtn"));
+    focusGuidance($("tlxSaveBtn"), `tlx-${layoutId}`);
+  }
+
+  function closeTlxModal() {
+    const modal = $("tlxModal");
+    modal.hidden = true;
+    tlxModalOpen = false;
+    tlxLayoutIdPending = null;
+    syncModalOpenState();
+    setAwaitingTlx(false);
+  }
+
   function updateExperimentStatus() {
     if (!experiment.running) {
       const statusText = experiment.completed
@@ -1088,7 +1450,9 @@
     const layoutText = layoutTotal > 0 ? `Layout ${layoutIndex}/${layoutTotal}: ${layoutLabel}` : `Layout: ${layoutLabel}`;
     const step = resolveWizardStep();
     let statusText = "";
-    if (step === "learning") {
+    if (experiment.awaitingTlx) {
+      statusText = `NASA-TLX required • ${layoutText}`;
+    } else if (step === "learning") {
       const item = currentLearningItem();
       statusText = `Learning • ${layoutText} • ${learningLabel(item)}`;
     } else {
@@ -1143,6 +1507,7 @@
     const downloadBtn = $("downloadCsvBtn");
     const repeatBtn = $("practiceRepeatBtn");
     const continueBtn = $("practiceContinueBtn");
+    const tlxSaveBtn = document.getElementById("tlxSaveBtn");
     const phaseTitleEl = $("experimentPhaseTitle");
     const phaseMetaEl = $("experimentPhaseMeta");
     const phaseLeftEl = $("experimentTrialsLeft");
@@ -1151,7 +1516,19 @@
     let phaseMeta = "";
     let trialsLeftText = "";
 
-    if (experiment.awaitingPracticeChoice) {
+    if (experiment.awaitingTlx) {
+      phaseTitle = "NASA-TLX";
+      renderStepRow(layoutStepper, [], -1, 0);
+      renderStepRow(trialStepper, [], -1, 0);
+      subLabel.textContent = "NASA-TLX required";
+      detail = "NASA-TLX";
+      phaseMeta = "Complete NASA-TLX to continue.";
+      actionEl.innerHTML = "<strong>NASA-TLX:</strong> Please rate workload for the completed layout.";
+      if (tlxSaveBtn) {
+        markNextAction(tlxSaveBtn);
+        focusGuidance(tlxSaveBtn, "tlx-save");
+      }
+    } else if (experiment.awaitingPracticeChoice) {
       phaseTitle = "Practice";
       renderStepRow(layoutStepper, [], -1, 0);
       renderStepRow(trialStepper, [], -1, 0);
@@ -1281,7 +1658,7 @@
 
     subLabel.style.display = subLabel.textContent ? "block" : "none";
     $("experimentProgressLabel").textContent = `Stage ${stageIndex + 1} of ${total} • ${detail} (${total - stageIndex - 1} left)`;
-    setSubmitReady((stageIndex === 2 || stageIndex === 3) && !experiment.awaitingPracticeChoice);
+    setSubmitReady((stageIndex === 2 || stageIndex === 3) && !experiment.awaitingPracticeChoice && !experiment.awaitingTlx);
     if (wizardModalOpen && wizardModalButton) {
       clearGuidanceHighlights();
       markNextAction(wizardModalButton);
@@ -1374,9 +1751,10 @@
     experiment.learningIndex = 0;
     experiment.practiceTrials = DEFAULT_PRACTICE_TRIALS;
     experiment.trialsPerLayout = DEFAULT_TRIALS_PER_LAYOUT;
-    experiment.orderMode = "fixed";
+    experiment.orderMode = "random";
     experiment.orderSeed = "";
     closePracticeModal();
+    closeTlxModal();
     closeWizardModal();
     lastGuidanceKey = "";
     setExperimentUiRunning(false);
@@ -1390,6 +1768,24 @@
     if (!isLearningPhase()) {
       completeLearningPhase();
     }
+    renderTarget();
+    resetTrial();
+    updateExperimentStatus();
+  }
+
+  function completeLayoutAfterTlx() {
+    experiment.layoutIndex += 1;
+    experiment.trialInLayout = 0;
+
+    if (experiment.layoutIndex >= experiment.layoutOrder.length) {
+      stopExperiment({ completed: true });
+      return;
+    }
+
+    state.layoutId = experiment.layoutOrder[experiment.layoutIndex];
+    renderLayoutSelect();
+    renderKeyboard();
+    startLearningForLayout();
     renderTarget();
     resetTrial();
     updateExperimentStatus();
@@ -1410,20 +1806,9 @@
     experiment.trialInLayout += 1;
 
     if (experiment.trialInLayout >= experiment.trialsPerLayout) {
-      experiment.layoutIndex += 1;
-      experiment.trialInLayout = 0;
-
-      if (experiment.layoutIndex >= experiment.layoutOrder.length) {
-        stopExperiment({ completed: true });
-        return;
-      }
-
-      state.layoutId = experiment.layoutOrder[experiment.layoutIndex];
-      renderLayoutSelect();
-      renderKeyboard();
-      startLearningForLayout();
-      renderTarget();
-      resetTrial();
+      openTlxModal(state.layoutId);
+      updateExperimentStatus();
+      return;
     }
 
     updateExperimentStatus();
@@ -1443,6 +1828,7 @@
 
   function skipExperimentPhase() {
     if (!experiment.running) return;
+    if (experiment.awaitingTlx) return;
     if (isLearningPhase()) {
       completeLearningPhase();
       renderTarget();
@@ -1484,6 +1870,14 @@
     renderTarget();
     resetTrial();
     renderKeyboard();
+    const keyboardContainer = document.getElementById("keyboardContainer");
+    if (keyboardContainer && !keyboardContainer.dataset.missListener) {
+      keyboardContainer.addEventListener("pointerdown", (event) => {
+        if (event?.target && event.target.closest(".key")) return;
+        handleKeyMiss();
+      });
+      keyboardContainer.dataset.missListener = "true";
+    }
     initTheoryDistanceControls();
     renderTheoryTable();
     initTlx();
@@ -1503,6 +1897,10 @@
     const devControls = document.getElementById("experimentDevControls");
     if (devControls) devControls.style.display = DEV_SHOW_SKIP_PHASE ? "block" : "none";
     if (skipPhaseBtn) skipPhaseBtn.addEventListener("click", skipExperimentPhase);
+
+    // Font testing controls
+    initFontControls();
+
     $("practiceRepeatBtn").addEventListener("click", handlePracticeRepeat);
     $("practiceContinueBtn").addEventListener("click", handlePracticeContinue);
     $("wizardModalContinue").addEventListener("click", () => {

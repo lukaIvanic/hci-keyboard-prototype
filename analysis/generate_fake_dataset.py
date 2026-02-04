@@ -58,24 +58,15 @@ def main():
     header = [
         "sessionId",
         "participantId",
-        "condition",
-        "orderMode",
-        "orderSeed",
-        "layoutOrder",
-        "layoutIndex",
-        "trialIndex",
         "trialId",
         "layoutId",
-        "phraseId",
-        "isPractice",
+        "trialType",
+        "learningKind",
         "target",
         "typed",
         "startTimeMs",
         "endTimeMs",
         "elapsedMs",
-        "charCount",
-        "wpm",
-        "editDistance",
         "backspaceCount",
         "keypressCount",
     ]
@@ -86,9 +77,6 @@ def main():
         session_id = f"session_{pid}"
         base_skill = 30 + p * 0.7
         order = seeded_order(LAYOUTS, f"{args.seed}-{pid}")
-        layout_order_str = "|".join(order)
-        order_mode = "seeded"
-        order_seed = pid
         trial_id = 1
         base_time = 1700000000000 + (p - 1) * 1000000
         time_cursor = base_time
@@ -99,9 +87,24 @@ def main():
             for trial_index in range(total_trials):
                 phrase_id = trial_index % len(PHRASES)
                 target = PHRASES[phrase_id]
-                typed = target
                 is_practice = trial_index < args.practice
-                char_count = len(target)
+                trial_type = "practice" if is_practice else "main"
+                edit_distance = LAYOUT_ERROR_BASE[layout_id] + (1 if is_practice else 0) + rng.randint(0, 1)
+                if p == 6 and layout_id == "sp_reverse_b" and trial_index == 4:
+                    edit_distance = 8
+                if p == 12 and layout_id == "sp_identity" and trial_index == 3:
+                    edit_distance = 7
+                if p == 18 and layout_id == "pretty_good" and trial_index == 2:
+                    edit_distance = 6
+
+                typed_chars = list(target)
+                if edit_distance > 0:
+                    indices = [i for i, ch in enumerate(typed_chars) if ch != " "]
+                    rng.shuffle(indices)
+                    for pos in indices[:edit_distance]:
+                        typed_chars[pos] = "x" if typed_chars[pos] != "x" else "y"
+                typed = "".join(typed_chars)
+                char_count = len(typed)
 
                 carryover = 0.0
                 if prev_layout == "qwerty":
@@ -116,15 +119,6 @@ def main():
                 wpm = max(18, wpm)
                 wpm = round(wpm, 1)
 
-                edit_distance = LAYOUT_ERROR_BASE[layout_id] + (1 if is_practice else 0) + rng.randint(0, 1)
-
-                if p == 6 and layout_id == "sp_reverse_b" and trial_index == 4:
-                    edit_distance = 8
-                if p == 12 and layout_id == "sp_identity" and trial_index == 3:
-                    edit_distance = 7
-                if p == 18 and layout_id == "pretty_good" and trial_index == 2:
-                    edit_distance = 6
-
                 backspace = edit_distance + (1 if is_practice else 0) + (p % 2)
                 keypress = char_count + backspace + (1 if edit_distance > 0 else 0)
 
@@ -136,35 +130,19 @@ def main():
                 end_ms = start_ms + elapsed_ms
                 time_cursor = end_ms + 400
 
-                wpm_value = f"{wpm:.1f}"
-                edit_value = str(edit_distance)
-                if p == 9 and layout_id == "sp_identity" and trial_index == 1:
-                    wpm_value = ""
-                if p == 15 and layout_id == "pretty_good" and trial_index == 2:
-                    edit_value = ""
-
                 rows.append(
                     [
                         session_id,
                         pid,
-                        "",
-                        order_mode,
-                        order_seed,
-                        layout_order_str,
-                        str(layout_index),
-                        str(trial_index),
                         str(trial_id),
                         layout_id,
-                        str(phrase_id),
-                        "true" if is_practice else "false",
+                        trial_type,
+                        "",
                         target,
                         typed,
                         str(start_ms),
                         str(end_ms),
                         str(elapsed_ms),
-                        str(char_count),
-                        wpm_value,
-                        edit_value,
                         str(backspace),
                         str(keypress),
                     ]

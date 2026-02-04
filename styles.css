@@ -1,3 +1,117 @@
+/* ==========================================================================
+   Font-face declarations for keyboard label testing
+   ========================================================================== */
+
+/* Atkinson Hyperlegible */
+@font-face {
+  font-family: "Atkinson Hyperlegible";
+  src: url("fonts/Atkinson_Hyperlegible/AtkinsonHyperlegible-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Atkinson Hyperlegible";
+  src: url("fonts/Atkinson_Hyperlegible/AtkinsonHyperlegible-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Inter (24pt static for clarity) */
+@font-face {
+  font-family: "Inter";
+  src: url("fonts/Inter/static/Inter_24pt-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Inter";
+  src: url("fonts/Inter/static/Inter_24pt-Medium.ttf") format("truetype");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Inter";
+  src: url("fonts/Inter/static/Inter_24pt-SemiBold.ttf") format("truetype");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Inter";
+  src: url("fonts/Inter/static/Inter_24pt-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Lexend */
+@font-face {
+  font-family: "Lexend";
+  src: url("fonts/Lexend/static/Lexend-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Lexend";
+  src: url("fonts/Lexend/static/Lexend-Medium.ttf") format("truetype");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Lexend";
+  src: url("fonts/Lexend/static/Lexend-SemiBold.ttf") format("truetype");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Lexend";
+  src: url("fonts/Lexend/static/Lexend-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Source Sans 3 */
+@font-face {
+  font-family: "Source Sans 3";
+  src: url("fonts/Source_Sans_3/static/SourceSans3-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Source Sans 3";
+  src: url("fonts/Source_Sans_3/static/SourceSans3-Medium.ttf") format("truetype");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Source Sans 3";
+  src: url("fonts/Source_Sans_3/static/SourceSans3-SemiBold.ttf") format("truetype");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Source Sans 3";
+  src: url("fonts/Source_Sans_3/static/SourceSans3-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* ==========================================================================
+   Root variables
+   ========================================================================== */
+
 :root {
   color-scheme: light;
   --bg: #0b1020;
@@ -20,6 +134,17 @@
   --kbdKeyBg: rgba(255, 255, 255, 0.08);
   --kbdKeyBgHover: rgba(255, 255, 255, 0.14);
   --kbdKeyBgActive: rgba(106, 166, 255, 0.25);
+
+  /* Keyboard font (switchable) */
+  --kbd-font-family: "Inter";
+  --kbd-font-weight: 700;
+  --kbd-char-transform: uppercase;
+  --kbd-key-font-size: 18px;
+  --phrase-row-height: 10vh;
+  --phrase-font-size: 16px;
+  --phrase-heading-size: 12px;
+  --phrase-padding: 10px;
+  --phrase-line-height: 1.2;
 }
 
 * {
@@ -203,7 +328,7 @@ body[data-session-running="true"] .wizardStatus {
 
 .experimentMain {
   display: grid;
-  grid-template-rows: 10vh 1fr;
+  grid-template-rows: var(--phrase-row-height, 10vh) 1fr;
   height: 100vh;
   overflow: hidden;
   padding: 8px 12px;
@@ -214,9 +339,9 @@ body[data-session-running="true"] .wizardStatus {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 10px;
-  height: 10vh;
-  min-height: 10vh;
-  max-height: 10vh;
+  height: var(--phrase-row-height, 10vh);
+  min-height: var(--phrase-row-height, 10vh);
+  max-height: var(--phrase-row-height, 10vh);
   overflow: hidden;
 }
 
@@ -279,6 +404,13 @@ body[data-session-running="true"] .wizardStatus {
   -webkit-tap-highlight-color: transparent;
 }
 
+.btn:disabled,
+.btn[disabled] {
+  cursor: not-allowed;
+  opacity: 0.5;
+  filter: grayscale(0.3);
+}
+
 .btn:hover {
   background: rgba(255, 255, 255, 0.09);
 }
@@ -334,28 +466,49 @@ body[data-session-running="true"] .wizardStatus {
 
 .phraseText {
   min-height: 38px;
-  padding: 10px 12px;
+  padding: var(--phrase-padding);
   border-radius: var(--radiusSmall);
   border: 1px solid var(--border);
   background: rgba(0, 0, 0, 0.25);
-  font-size: 15px;
-  line-height: 1.35;
+  font-size: var(--phrase-font-size);
+  line-height: var(--phrase-line-height);
   white-space: pre-wrap;
 }
 
+.phraseText .targetChar {
+  display: inline-block;
+}
+
+.phraseText .targetCharDone {
+  color: rgba(169, 179, 208, 0.6);
+}
+
+.phraseText .targetCharCurrent {
+  color: #f2f5ff;
+  background: rgba(106, 166, 255, 0.22);
+  border-bottom: 2px solid rgba(106, 166, 255, 0.75);
+}
+
+.phraseText .targetCharError {
+  color: #ffd1d1;
+  background: rgba(245, 101, 101, 0.2);
+  border-bottom: 2px solid rgba(245, 101, 101, 0.75);
+}
+
+
 .typedText {
   min-height: 38px;
-  padding: 10px 12px;
+  padding: var(--phrase-padding);
   border-radius: var(--radiusSmall);
   border: 1px solid rgba(106, 166, 255, 0.35);
   background: rgba(0, 0, 0, 0.25);
-  font-size: 15px;
-  line-height: 1.35;
+  font-size: var(--phrase-font-size);
+  line-height: var(--phrase-line-height);
   white-space: pre-wrap;
 }
 
 .phraseHeading {
-  font-size: 12px;
+  font-size: var(--phrase-heading-size);
   font-weight: 700;
   letter-spacing: 0.3px;
   text-transform: uppercase;
@@ -366,8 +519,6 @@ body[data-session-running="true"] .wizardStatus {
 .experimentMain .phraseRow .typedText {
   height: 100%;
   min-height: 0;
-  font-size: clamp(15px, 1.6vw, 20px);
-  line-height: 1.15;
   white-space: normal;
   word-break: break-word;
   overflow: hidden;
@@ -415,20 +566,19 @@ body[data-session-running="true"] .wizardStatus {
   border: 1px solid rgba(255, 255, 255, 0.16);
   background: var(--kbdKeyBg);
   color: var(--text);
-  font-size: clamp(16px, 2.1vw, 24px);
-  font-weight: 600;
+  font-family: var(--kbd-font-family);
+  font-size: var(--kbd-key-font-size, clamp(16px, 2.1vw, 24px));
+  font-weight: var(--kbd-font-weight);
   cursor: pointer;
   user-select: none;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
 }
 
-.keyTarget {
-  border-color: var(--phase-accent);
-  box-shadow:
-    0 0 0 2px var(--phase-accent-soft),
-    0 0 14px var(--phase-accent);
+.key.keyChar {
+  text-transform: var(--kbd-char-transform);
 }
+
 
 .key:hover {
   background: var(--kbdKeyBgHover);
@@ -440,7 +590,7 @@ body[data-session-running="true"] .wizardStatus {
 }
 
 .key.keyWide {
-  font-size: clamp(14px, 1.4vw, 18px);
+  font-size: calc(var(--kbd-key-font-size, 18px) * 0.8);
   font-weight: 700;
 }
 
@@ -707,7 +857,7 @@ body[data-session-running="true"] .controlTrayDetails {
 
 .tlxPanel {
   display: grid;
-  gap: 10px;
+  gap: 24px;
 }
 
 .tlxStatus {
@@ -716,29 +866,40 @@ body[data-session-running="true"] .controlTrayDetails {
 
 .tlxGrid {
   display: grid;
-  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 28px;
+  row-gap: 28px;
 }
 
 .tlxRow {
   display: grid;
-  gap: 6px;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: var(--radiusSmall);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.18);
 }
 
 .tlxLabel {
-  font-size: 12.5px;
-  font-weight: 600;
+  font-size: 1.05em;
+  font-weight: 700;
   color: rgba(242, 245, 255, 0.95);
+}
+
+.tlxDesc {
+  font-size: 0.95em;
+  color: rgba(242, 245, 255, 0.78);
 }
 
 .tlxControl {
   display: grid;
   grid-template-columns: auto 1fr auto auto;
-  gap: 8px;
+  gap: 12px;
   align-items: center;
 }
 
 .tlxAnchor {
-  font-size: 11px;
+  font-size: 0.9em;
   color: var(--muted);
 }
 
@@ -746,15 +907,24 @@ body[data-session-running="true"] .controlTrayDetails {
   width: 100%;
 }
 
+.tlxSlider.tlxSliderUntouched {
+  opacity: 0.45;
+  filter: grayscale(0.6);
+}
+
 .tlxValue {
-  min-width: 28px;
+  min-width: 36px;
   text-align: right;
-  font-size: 12px;
+  font-size: 1em;
   color: var(--text);
 }
 
+.tlxValue.tlxValueEmpty {
+  color: var(--muted);
+}
+
 .tlxNote {
-  font-size: 11.5px;
+  font-size: 0.95em;
   color: var(--muted);
 }
 
@@ -1090,6 +1260,39 @@ body[data-session-running="true"] .controlTrayDetails {
   padding: 16px;
 }
 
+.tlxModalCard {
+  width: 60vw;
+  height: 92vh;
+  max-width: 96vw;
+  max-height: 92vh;
+  min-width: 320px;
+  min-height: 420px;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  font-size: clamp(12px, 1.1vw + 0.6vh, 20px);
+  overflow: hidden;
+}
+
+.tlxModalCard .modalTitle {
+  font-size: 1.4em;
+}
+
+.tlxModalCard .hint {
+  font-size: 1em;
+}
+
+.tlxModalCard #tlxModalSubtitle {
+  margin: 0 0 28px;
+}
+
+.tlxModalCard .tlxPanel {
+  flex: 1;
+  overflow: auto;
+  padding-right: 6px;
+}
+
 .modalTitle {
   margin: 0 0 8px;
   font-size: 16px;
@@ -1100,6 +1303,12 @@ body[data-session-running="true"] .controlTrayDetails {
   gap: 10px;
   flex-wrap: wrap;
   margin-top: 12px;
+}
+
+@media (max-width: 900px) {
+  .tlxModalCard .tlxGrid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .warningItem {
@@ -1222,6 +1431,67 @@ body[data-session-running="true"] .controlTrayDetails {
 
 .footer {
   margin-top: 10px;
+}
+
+/* ==========================================================================
+   Font testing controls (dev)
+   ========================================================================== */
+
+.fontControls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--border);
+  border-radius: var(--radiusSmall);
+  font-size: 12px;
+}
+
+.fontControls summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.fontControls[open] summary {
+  margin-bottom: 8px;
+}
+
+.fontControlRow {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.fontControlRow label {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.fontControlRow select {
+  padding: 4px 6px;
+  font-size: 12px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+}
+
+.fontControlRow input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+}
+
+.fontControlCheckbox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text);
 }
 
 @media (max-height: 820px) {

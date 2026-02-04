@@ -123,6 +123,34 @@
               <div id="experimentDevControls" class="railBlock devControls">
                 <button id="experimentSkipPhaseBtn" class="btn btnSecondary" type="button">Skip current phase</button>
               </div>
+              <details class="fontControls" open>
+                <summary>Font testing</summary>
+                <div class="fontControlRow">
+                  <label for="kbdFontSelect">Font family</label>
+                  <select id="kbdFontSelect">
+                    <option value="Inter">Inter</option>
+                    <option value="Atkinson Hyperlegible">Atkinson Hyperlegible</option>
+                    <option value="Lexend">Lexend</option>
+                    <option value="Source Sans 3">Source Sans 3</option>
+                    <option value="inherit">System default</option>
+                  </select>
+                </div>
+                <div class="fontControlRow">
+                  <label for="kbdWeightSelect">Font weight</label>
+                  <select id="kbdWeightSelect">
+                    <option value="400">400 (Regular)</option>
+                    <option value="500">500 (Medium)</option>
+                    <option value="600">600 (SemiBold)</option>
+                    <option value="700" selected>700 (Bold)</option>
+                  </select>
+                </div>
+                <div class="fontControlRow">
+                  <label class="fontControlCheckbox">
+                    <input type="checkbox" id="kbdUppercaseToggle" checked />
+                    Uppercase letters
+                  </label>
+                </div>
+              </details>
             </aside>
             <div class="experimentMain">
               <div class="phraseRow">
@@ -187,73 +215,6 @@
               </span>
             </div>
             <div id="sheetStatus" class="hint" aria-live="polite"></div>
-          </section>
-
-          <section id="tlxPanel" class="panel tlxPanel">
-            <h2 class="sectionTitle">NASA-TLX (workload)</h2>
-            <p class="hint">Complete after the session. Rate each dimension from Low to High.</p>
-            <div id="tlxStatus" class="hint tlxStatus" role="status" aria-live="polite">Not saved yet.</div>
-            <div class="tlxGrid">
-              <label class="tlxRow">
-                <span class="tlxLabel">Mental demand</span>
-                <div class="tlxControl">
-                  <span class="tlxAnchor">Low</span>
-                  <input id="tlxMental" class="tlxSlider" type="range" min="0" max="100" step="1" value="50" />
-                  <span class="tlxAnchor">High</span>
-                  <output id="tlxMentalValue" class="tlxValue">50</output>
-                </div>
-              </label>
-              <label class="tlxRow">
-                <span class="tlxLabel">Physical demand</span>
-                <div class="tlxControl">
-                  <span class="tlxAnchor">Low</span>
-                  <input id="tlxPhysical" class="tlxSlider" type="range" min="0" max="100" step="1" value="50" />
-                  <span class="tlxAnchor">High</span>
-                  <output id="tlxPhysicalValue" class="tlxValue">50</output>
-                </div>
-              </label>
-              <label class="tlxRow">
-                <span class="tlxLabel">Temporal demand</span>
-                <div class="tlxControl">
-                  <span class="tlxAnchor">Low</span>
-                  <input id="tlxTemporal" class="tlxSlider" type="range" min="0" max="100" step="1" value="50" />
-                  <span class="tlxAnchor">High</span>
-                  <output id="tlxTemporalValue" class="tlxValue">50</output>
-                </div>
-              </label>
-              <label class="tlxRow">
-                <span class="tlxLabel">Performance</span>
-                <div class="tlxControl">
-                  <span class="tlxAnchor">Good</span>
-                  <input id="tlxPerformance" class="tlxSlider" type="range" min="0" max="100" step="1" value="50" />
-                  <span class="tlxAnchor">Poor</span>
-                  <output id="tlxPerformanceValue" class="tlxValue">50</output>
-                </div>
-                <span class="tlxNote">Low = good performance, High = poor performance.</span>
-              </label>
-              <label class="tlxRow">
-                <span class="tlxLabel">Effort</span>
-                <div class="tlxControl">
-                  <span class="tlxAnchor">Low</span>
-                  <input id="tlxEffort" class="tlxSlider" type="range" min="0" max="100" step="1" value="50" />
-                  <span class="tlxAnchor">High</span>
-                  <output id="tlxEffortValue" class="tlxValue">50</output>
-                </div>
-              </label>
-              <label class="tlxRow">
-                <span class="tlxLabel">Frustration</span>
-                <div class="tlxControl">
-                  <span class="tlxAnchor">Low</span>
-                  <input id="tlxFrustration" class="tlxSlider" type="range" min="0" max="100" step="1" value="50" />
-                  <span class="tlxAnchor">High</span>
-                  <output id="tlxFrustrationValue" class="tlxValue">50</output>
-                </div>
-              </label>
-            </div>
-            <div class="studyButtons" style="margin-top: 10px">
-              <button id="tlxSaveBtn" class="btn btnPrimary" type="button">Save NASA-TLX</button>
-              <button id="tlxClearBtn" class="btn btnSecondary" type="button">Reset</button>
-            </div>
           </section>
 
           <section class="panel">
@@ -371,6 +332,83 @@
         <div class="modalActions">
           <button id="practiceRepeatBtn" class="btn btnPrimary" type="button">Another practice round</button>
           <button id="practiceContinueBtn" class="btn btnSecondary" type="button">Continue to main trials</button>
+        </div>
+      </div>
+    </div>
+    <div id="tlxModal" class="modalOverlay" hidden>
+      <div class="modalCard tlxModalCard" role="dialog" aria-modal="true" aria-labelledby="tlxModalTitle">
+        <h3 id="tlxModalTitle" class="modalTitle">Form</h3>
+        <p id="tlxModalSubtitle" class="hint"></p>
+        <div id="tlxStatus" class="hint tlxStatus" role="status" aria-live="polite"></div>
+        <section id="tlxPanel" class="tlxPanel">
+          <div class="tlxGrid">
+            <label class="tlxRow">
+              <span class="tlxLabel">Mental demand</span>
+              <div class="tlxDesc">How mentally demanding was the task?</div>
+              <div class="tlxControl">
+                <span class="tlxAnchor">Low</span>
+                <input id="tlxMental" class="tlxSlider" type="range" min="0" max="100" step="5" value="50" />
+                <span class="tlxAnchor">High</span>
+                <output id="tlxMentalValue" class="tlxValue">50</output>
+              </div>
+            </label>
+            <label class="tlxRow">
+              <span class="tlxLabel">Physical demand</span>
+              <div class="tlxDesc">How physically demanding was the task?</div>
+              <div class="tlxControl">
+                <span class="tlxAnchor">Low</span>
+                <input id="tlxPhysical" class="tlxSlider" type="range" min="0" max="100" step="5" value="50" />
+                <span class="tlxAnchor">High</span>
+                <output id="tlxPhysicalValue" class="tlxValue">50</output>
+              </div>
+            </label>
+            <label class="tlxRow">
+              <span class="tlxLabel">Temporal demand</span>
+              <div class="tlxDesc">How hurried or rushed was the pace of the task?</div>
+              <div class="tlxControl">
+                <span class="tlxAnchor">Low</span>
+                <input id="tlxTemporal" class="tlxSlider" type="range" min="0" max="100" step="5" value="50" />
+                <span class="tlxAnchor">High</span>
+                <output id="tlxTemporalValue" class="tlxValue">50</output>
+              </div>
+            </label>
+            <label class="tlxRow">
+              <span class="tlxLabel">Performance</span>
+              <div class="tlxDesc">How successful were you in accomplishing what you were asked to do?</div>
+              <div class="tlxControl">
+                <span class="tlxAnchor">Good</span>
+                <input id="tlxPerformance" class="tlxSlider" type="range" min="0" max="100" step="5" value="50" />
+                <span class="tlxAnchor">Poor</span>
+                <output id="tlxPerformanceValue" class="tlxValue">50</output>
+              </div>
+            </label>
+            <label class="tlxRow">
+              <span class="tlxLabel">Effort</span>
+              <div class="tlxDesc">How hard did you have to work to accomplish your level of performance?</div>
+              <div class="tlxControl">
+                <span class="tlxAnchor">Low</span>
+                <input id="tlxEffort" class="tlxSlider" type="range" min="0" max="100" step="5" value="50" />
+                <span class="tlxAnchor">High</span>
+                <output id="tlxEffortValue" class="tlxValue">50</output>
+              </div>
+            </label>
+            <label class="tlxRow">
+              <span class="tlxLabel">Frustration</span>
+              <div class="tlxDesc">
+                How insecure, discouraged, irritated, stressed, and annoyed were you?
+              </div>
+              <div class="tlxControl">
+                <span class="tlxAnchor">Low</span>
+                <input id="tlxFrustration" class="tlxSlider" type="range" min="0" max="100" step="5" value="50" />
+                <span class="tlxAnchor">High</span>
+                <output id="tlxFrustrationValue" class="tlxValue">50</output>
+              </div>
+            </label>
+          </div>
+        </section>
+        <div class="modalActions">
+          <button id="tlxSaveBtn" class="btn btnPrimary" type="button">Continue</button>
+          <button id="tlxClearBtn" class="btn btnSecondary" type="button">Reset</button>
         </div>
       </div>
     </div>

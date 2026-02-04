@@ -19,6 +19,39 @@ def parse_float(value):
         return None
 
 
+def compute_wpm(char_count, elapsed_ms):
+    if char_count is None or elapsed_ms is None or elapsed_ms <= 0:
+        return None
+    minutes = elapsed_ms / 1000.0 / 60.0
+    return (char_count / 5.0) / minutes
+
+
+def edit_distance(a, b):
+    s = str(a or "")
+    t = str(b or "")
+    n = len(s)
+    m = len(t)
+    if n == 0:
+        return m
+    if m == 0:
+        return n
+
+    prev = list(range(m + 1))
+    curr = [0] * (m + 1)
+    for i in range(1, n + 1):
+        curr[0] = i
+        s_char = s[i - 1]
+        for j in range(1, m + 1):
+            cost = 0 if s_char == t[j - 1] else 1
+            delete = prev[j] + 1
+            insert = curr[j - 1] + 1
+            sub = prev[j - 1] + cost
+            curr[j] = min(delete, insert, sub)
+        prev, curr = curr, prev
+
+    return prev[m]
+
+
 def compute_summary(rows):
     wpm_vals = []
     ed_vals = []
@@ -27,13 +60,16 @@ def compute_summary(rows):
     outliers = 0
 
     for row in rows:
-        if parse_bool(row.get("isPractice")):
+        trial_type = str(row.get("trialType") or "").strip().lower()
+        if trial_type in {"practice", "learning", "free"}:
             continue
 
-        wpm = parse_float(row.get("wpm"))
-        ed = parse_float(row.get("editDistance"))
-        char_count = parse_float(row.get("charCount"))
+        typed = row.get("typed") or ""
+        target = row.get("target") or ""
+        char_count = len(typed)
         elapsed_ms = parse_float(row.get("elapsedMs"))
+        ed = edit_distance(target, typed)
+        wpm = compute_wpm(char_count, elapsed_ms)
 
         if wpm is not None:
             wpm_vals.append(wpm)

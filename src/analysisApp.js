@@ -2,11 +2,11 @@
   "use strict";
 
   const STORAGE_PREFIX = "KbdStudy.analysisPage.";
-  const URL_STORAGE_KEY = `${STORAGE_PREFIX}sheetUrl.v1`;
   const ANALYSIS_STORAGE_KEY = `${STORAGE_PREFIX}analysis.v1`;
-  const THRESHOLD_STORAGE_KEY = `${STORAGE_PREFIX}thresholds.v1`;
   const PARTICIPANT_FILTER_KEY = `${STORAGE_PREFIX}participantFilter.v1`;
-  const DEFAULT_DEMO_CSV_URL = "analysis/fake_dataset_20_participants.csv";
+  const APPS_SCRIPT_WEB_APP_URL =
+    "https://script.google.com/macros/s/AKfycbytD-NEdHkHJGAHObI12TCWxzEga5m_PX4A1vmbAJrdwQXSxEQZ8SMTZvbzJ5wq7LbNeA/exec";
+  const FIXED_THRESHOLDS = { excludePractice: true, minTrials: 0, minElapsedMs: 0, maxErrorRate: 1 };
 
   const METRICS = [
     { key: "wpm", label: "WPM", decimals: 2 },
@@ -29,12 +29,19 @@
   ];
 
   const REQUIRED_HEADERS = [
-    "layoutId",
+    "sessionId",
     "participantId",
-    "wpm",
-    "editDistance",
-    "charCount",
+    "trialId",
+    "layoutId",
+    "trialType",
+    "learningKind",
+    "target",
+    "typed",
+    "startTimeMs",
+    "endTimeMs",
     "elapsedMs",
+    "backspaceCount",
+    "keypressCount",
   ];
 
   const CHART_COLORS = [
@@ -76,13 +83,6 @@
     localStorage.setItem(ANALYSIS_STORAGE_KEY, JSON.stringify(state));
   }
 
-  function loadThresholds() {
-    const raw = localStorage.getItem(THRESHOLD_STORAGE_KEY);
-    return raw
-      ? safeParse(raw, { minTrials: 5, minElapsedMs: 2000, maxErrorRate: 0.4, excludePractice: true })
-      : { minTrials: 5, minElapsedMs: 2000, maxErrorRate: 0.4, excludePractice: true };
-  }
-
   function loadParticipantFilter() {
     const raw = localStorage.getItem(PARTICIPANT_FILTER_KEY);
     if (!raw) return null;
@@ -98,30 +98,12 @@
     localStorage.setItem(PARTICIPANT_FILTER_KEY, JSON.stringify(ids));
   }
 
-  function saveThresholds(state) {
-    localStorage.setItem(THRESHOLD_STORAGE_KEY, JSON.stringify(state));
-  }
-
-  function loadCsvUrl() {
-    return String(localStorage.getItem(URL_STORAGE_KEY) || "");
-  }
-
-  function saveCsvUrl(value) {
-    localStorage.setItem(URL_STORAGE_KEY, String(value || ""));
-  }
-
-  function normalizeCsvUrl(value) {
-    const raw = String(value || "").trim();
-    if (!raw) return "";
-    if (raw.includes("output=csv")) return raw;
-    const idMatch = raw.match(/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
-    if (idMatch) {
-      const id = idMatch[1];
-      const gidMatch = raw.match(/gid=([0-9]+)/);
-      const gid = gidMatch ? gidMatch[1] : "0";
-      return `https://docs.google.com/spreadsheets/d/${id}/export?format=csv&gid=${gid}`;
+  function ensureAppsScriptUrl(statusEl) {
+    if (!APPS_SCRIPT_WEB_APP_URL) {
+      if (statusEl) statusEl.textContent = "Missing Apps Script URL. Set APPS_SCRIPT_WEB_APP_URL in analysisApp.js.";
+      return false;
     }
-    return raw;
+    return true;
   }
 
   function parseCsv(text) {
@@ -163,9 +145,103 @@
     return REQUIRED_HEADERS.filter((h) => !normalized.includes(h));
   }
 
+  async function fetchParticipantSheets() {
+    const url = `${APPS_SCRIPT_WEB_APP_URL}?action=listSheets`;
+    const resp = await fetch(url, { cache: "no-store" });
+    if (!resp.ok) {
+      throw new Error(`List fetch failed (HTTP ${resp.status})`);
+    }
+    const data = await resp.json();
+    if (!data || data.ok !== true) {
+      throw new Error(data?.error || "Failed to list participant sheets.");
+    }
+    return Array.isArray(data.sheets) ? data.sheets : [];
+  }
+
+  async function fetchSheetCsv(sheetName) {
+    const url = `${APPS_SCRIPT_WEB_APP_URL}?action=csv&sheet=${encodeURIComponent(sheetName)}`;
+    const resp = await fetch(url, { cache: "no-store" });
+    if (!resp.ok) {
+      throw new Error(`CSV fetch failed for ${sheetName} (HTTP ${resp.status})`);
+    }
+    return resp.text();
+  }
+
+  async function fetchAllParticipantRows(statusEl) {
+    if (!ensureAppsScriptUrl(statusEl)) return { rows: [], warnings: ["Missing Apps Script URL."] };
+    statusEl.textContent = "Fetching participant sheet list...";
+    const sheets = await fetchParticipantSheets();
+    if (!sheets.length) {
+      return { rows: [], warnings: ["No participant sheets found."] };
+    }
+    statusEl.textContent = `Fetching ${sheets.length} participant sheet${sheets.length === 1 ? "" : "s"}...`;
+
+    const results = await Promise.allSettled(sheets.map((name) => fetchSheetCsv(name)));
+    const rows = [];
+    const warnings = [];
+
+    results.forEach((result, idx) => {
+      const sheetName = sheets[idx];
+      if (result.status !== "fulfilled") {
+        warnings.push(`Failed to fetch ${sheetName}: ${result.reason?.message || result.reason}`);
+        return;
+      }
+      const parsed = parseCsv(result.value);
+      if (!parsed.rows.length) return;
+      const missingHeaders = validateHeaders(parsed.headers);
+      if (missingHeaders.length) {
+        warnings.push(`Sheet ${sheetName} missing columns: ${missingHeaders.join(", ")}`);
+        return;
+      }
+      parsed.rows.forEach((row) => {
+        if (!row.participantId) row.participantId = sheetName;
+      });
+      rows.push(...parsed.rows);
+    });
+
+    return { rows, warnings };
+  }
+
   function toNumber(value, fallback = null) {
     const n = Number.parseFloat(value);
     return Number.isFinite(n) ? n : fallback;
+  }
+
+  function computeWpm(charCount, elapsedMs) {
+    if (!Number.isFinite(charCount) || !Number.isFinite(elapsedMs) || elapsedMs <= 0) return null;
+    const minutes = elapsedMs / 1000 / 60;
+    return (charCount / 5) / minutes;
+  }
+
+  function editDistance(a, b) {
+    const s = String(a ?? "");
+    const t = String(b ?? "");
+    const n = s.length;
+    const m = t.length;
+    if (n === 0) return m;
+    if (m === 0) return n;
+
+    let prev = new Array(m + 1);
+    let curr = new Array(m + 1);
+
+    for (let j = 0; j <= m; j++) prev[j] = j;
+
+    for (let i = 1; i <= n; i++) {
+      curr[0] = i;
+      const sChar = s.charCodeAt(i - 1);
+      for (let j = 1; j <= m; j++) {
+        const cost = sChar === t.charCodeAt(j - 1) ? 0 : 1;
+        const del = prev[j] + 1;
+        const ins = curr[j - 1] + 1;
+        const sub = prev[j - 1] + cost;
+        curr[j] = Math.min(del, ins, sub);
+      }
+      const tmp = prev;
+      prev = curr;
+      curr = tmp;
+    }
+
+    return prev[m];
   }
 
   function mean(arr) {
@@ -202,6 +278,60 @@
       set.add(pid);
     });
     return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }
+
+  function deriveColumns(rows) {
+    const bySession = new Map();
+    rows.forEach((row) => {
+      const sessionId = row.sessionId || "";
+      if (!bySession.has(sessionId)) bySession.set(sessionId, []);
+      bySession.get(sessionId).push(row);
+    });
+
+    bySession.forEach((sessionRows) => {
+      const ordered = sessionRows
+        .slice()
+        .sort((a, b) => (toNumber(a.trialId, 0) ?? 0) - (toNumber(b.trialId, 0) ?? 0));
+      const layoutOrder = [];
+      const layoutIndexMap = new Map();
+
+      ordered.forEach((row) => {
+        const layoutId = row.layoutId || "";
+        const trialType = String(row.trialType || "").toLowerCase();
+        if (trialType === "free" || !layoutId) return;
+        if (!layoutIndexMap.has(layoutId)) {
+          layoutIndexMap.set(layoutId, layoutOrder.length + 1);
+          layoutOrder.push(layoutId);
+        }
+      });
+
+      const layoutOrderStr = layoutOrder.join("|");
+      const mainCounters = new Map();
+
+      ordered.forEach((row) => {
+        const trialType = String(row.trialType || "").toLowerCase();
+        const typed = String(row.typed ?? "");
+        const target = String(row.target ?? "");
+        const elapsedMs = toNumber(row.elapsedMs, null);
+        const charCount = typed.length;
+        row.charCount = charCount;
+        row.editDistance = editDistance(target, typed);
+        row.wpm = computeWpm(charCount, elapsedMs);
+        row.isPractice = trialType === "practice";
+        row.layoutOrder = layoutOrderStr;
+        row.layoutIndex = layoutIndexMap.get(row.layoutId) ?? null;
+
+        if (trialType === "main") {
+          const next = (mainCounters.get(row.layoutId) || 0) + 1;
+          mainCounters.set(row.layoutId, next);
+          row.trialIndex = next;
+        } else {
+          row.trialIndex = 0;
+        }
+      });
+    });
+
+    return rows;
   }
 
   function normalizeParticipantSelection(savedIds, availableIds) {
@@ -1320,9 +1450,10 @@
   function renderEligibility(summary, thresholds) {
     const ok = summary.warnings.length === 0;
     const el = $("analysisEligibility");
+    const detail = thresholds.excludePractice ? "Practice excluded by default." : "Practice included.";
     el.innerHTML = `
       <div class="${ok ? "badgeOk" : "badgeWarn"}">${ok ? "Pass" : "Review"}</div>
-      <div class="hint">min trials ${thresholds.minTrials}, min elapsed ${thresholds.minElapsedMs} ms, max error ${thresholds.maxErrorRate}</div>
+      <div class="hint">${detail}</div>
     `;
   }
 
@@ -2262,50 +2393,18 @@ Generated by the study analysis tool.
 
   async function fetchAndAnalyze() {
     const statusEl = $("analysisStatus");
-    const urlInput = $("analysisSheetUrl");
-    const rawUrl = String(urlInput.value || "");
-    const url = normalizeCsvUrl(rawUrl);
-    if (!url) {
-      statusEl.textContent = "Paste a published CSV URL first.";
-      return;
-    }
     if (!ensureLibraries(statusEl)) return;
-    urlInput.value = url;
-    saveCsvUrl(url);
-
-    const excludeEl = $("analysisExcludePractice");
-    const minTrialsEl = $("analysisMinTrials");
-    const minElapsedEl = $("analysisMinElapsed");
-    const maxErrorEl = $("analysisMaxErrorRate");
-    const excludePractice = excludeEl.value === "true";
-    const thresholds = {
-      excludePractice,
-      minTrials: toNumber(minTrialsEl.value, 5),
-      minElapsedMs: toNumber(minElapsedEl.value, 2000),
-      maxErrorRate: toNumber(maxErrorEl.value, 0.4),
-    };
-    saveThresholds(thresholds);
-
-    statusEl.textContent = "Fetching CSV...";
+    if (!ensureAppsScriptUrl(statusEl)) return;
+    const thresholds = { ...FIXED_THRESHOLDS };
+    statusEl.textContent = "Fetching participant sheets...";
     try {
-      const resp = await fetch(url, { cache: "no-store" });
-      if (!resp.ok) {
-        throw new Error(`HTTP ${resp.status}`);
-      }
-      const text = await resp.text();
-      const parsed = parseCsv(text);
-      if (!parsed.rows.length) {
-        statusEl.textContent = "No rows found in CSV.";
+      const { rows: rawRows, warnings: fetchWarnings } = await fetchAllParticipantRows(statusEl);
+      if (!rawRows.length) {
+        statusEl.textContent = "No rows found in participant sheets.";
+        if (fetchWarnings.length) renderWarnings(fetchWarnings);
         return;
       }
-      const missingHeaders = validateHeaders(parsed.headers);
-      if (missingHeaders.length) {
-        const message = `Missing required columns: ${missingHeaders.join(", ")}`;
-        statusEl.textContent = message;
-        renderWarnings([message]);
-        return;
-      }
-      const rows = parsed.rows;
+      const rows = deriveColumns(rawRows);
       lastRows = rows;
       lastThresholds = thresholds;
       const participantIds = listParticipants(rows);
@@ -2315,6 +2414,9 @@ Generated by the study analysis tool.
       renderParticipantFilter(participantIds, selectedSet, statusEl);
       const filteredRows = applyParticipantFilter(rows, selectedSet);
       const analysis = computeAnalysisData(filteredRows, thresholds);
+      if (fetchWarnings.length) {
+        analysis.summary.warnings = mergeWarnings(analysis.summary.warnings || [], fetchWarnings);
+      }
       const payload = { rows, thresholds, updatedAtMs: Date.now(), participantFilter: Array.from(selectedSet) };
       saveAnalysisState(payload);
       renderDashboard(analysis, thresholds, statusEl);
@@ -2326,32 +2428,24 @@ Generated by the study analysis tool.
   }
 
   function init() {
-    const storedUrl = loadCsvUrl();
-    $("analysisSheetUrl").value = storedUrl || DEFAULT_DEMO_CSV_URL;
-
-    const thresholds = loadThresholds();
-    $("analysisExcludePractice").value = thresholds.excludePractice ? "true" : "false";
-    $("analysisMinTrials").value = thresholds.minTrials;
-    $("analysisMinElapsed").value = thresholds.minElapsedMs;
-    $("analysisMaxErrorRate").value = thresholds.maxErrorRate;
-
+    const thresholds = { ...FIXED_THRESHOLDS };
     const stored = loadAnalysisState();
     if (stored) {
-      const storedThresholds = stored.thresholds || thresholds;
       if (Array.isArray(stored.rows) && stored.rows.length) {
-        lastRows = stored.rows;
-        lastThresholds = storedThresholds;
-        const participantIds = listParticipants(stored.rows);
+        const derivedRows = deriveColumns(stored.rows);
+        lastRows = derivedRows;
+        lastThresholds = thresholds;
+        const participantIds = listParticipants(derivedRows);
         const savedFilter = loadParticipantFilter() || stored.participantFilter || null;
         const selectedSet = normalizeParticipantSelection(savedFilter, participantIds);
         saveParticipantFilter(Array.from(selectedSet));
         renderParticipantFilter(participantIds, selectedSet, $("analysisStatus"));
-        const filteredRows = applyParticipantFilter(stored.rows, selectedSet);
-        const analysis = computeAnalysisData(filteredRows, storedThresholds);
-        renderDashboard(analysis, storedThresholds, $("analysisStatus"));
+        const filteredRows = applyParticipantFilter(derivedRows, selectedSet);
+        const analysis = computeAnalysisData(filteredRows, thresholds);
+        renderDashboard(analysis, thresholds, $("analysisStatus"));
       } else if (stored.summary) {
         renderAnalysisSummary(stored.summary);
-        renderEligibility(stored.summary, storedThresholds);
+        renderEligibility(stored.summary, thresholds);
         renderKeyFindings(stored.summary, null);
         renderWarnings(stored.summary.warnings || []);
         renderAnalysisTable(stored.summary.layouts || []);
@@ -2372,10 +2466,11 @@ Generated by the study analysis tool.
     }
 
     $("analysisFetchBtn").addEventListener("click", fetchAndAnalyze);
+    fetchAndAnalyze();
     $("downloadSummaryBtn").addEventListener("click", () => {
       const state = loadAnalysisState();
       if (!state) return;
-      const analysis = state.rows ? computeAnalysisData(state.rows, state.thresholds || thresholds) : null;
+      const analysis = state.rows ? computeAnalysisData(deriveColumns(state.rows), thresholds) : null;
       const layouts = analysis ? analysis.summary.layouts : state.summary?.layouts || [];
       const header =
         "layoutId,trials,meanWpm,meanEditDistance,meanErrorRate,meanElapsedSeconds,meanBackspaceCount,meanKeypressCount";
@@ -2391,7 +2486,7 @@ Generated by the study analysis tool.
     $("downloadReportSnippetBtn").addEventListener("click", () => {
       const state = loadAnalysisState();
       if (!state) return;
-      const analysis = state.rows ? computeAnalysisData(state.rows, state.thresholds || thresholds) : null;
+      const analysis = state.rows ? computeAnalysisData(deriveColumns(state.rows), thresholds) : null;
       if (!analysis) return;
       const snippet = buildReportSnippet(analysis);
       downloadFile("report_snippet.md", snippet);
@@ -2400,7 +2495,7 @@ Generated by the study analysis tool.
     $("downloadResultsTablesBtn").addEventListener("click", () => {
       const state = loadAnalysisState();
       if (!state) return;
-      const analysis = state.rows ? computeAnalysisData(state.rows, state.thresholds || thresholds) : null;
+      const analysis = state.rows ? computeAnalysisData(deriveColumns(state.rows), thresholds) : null;
       if (!analysis) return;
       downloadFile("analysis_results_tables.csv", buildResultsTablesCsv(analysis));
     });

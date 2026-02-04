@@ -16,7 +16,7 @@
       <header class="header">
         <div>
           <h1 class="title">Live Analysis</h1>
-          <p class="subtitle">Fetch results from the All_Trials sheet and compute summaries in real time.</p>
+          <p class="subtitle">Fetch results from participant sheets and compute summaries in real time.</p>
         </div>
         <div class="buttons">
           <span class="infoInline">
@@ -54,40 +54,7 @@
 
       <section class="panel">
         <h2 class="sectionTitle">Data source</h2>
-        <p class="hint">
-          Publish the All_Trials tab to web and paste the CSV link here. Example: a URL ending with
-          <code>output=csv</code>.
-        </p>
-        <div class="studyGrid">
-          <label class="field">
-            <span class="fieldLabel">Published CSV URL</span>
-            <input
-              id="analysisSheetUrl"
-              class="select"
-              type="url"
-              placeholder="https://docs.google.com/spreadsheets/d/.../pub?output=csv"
-            />
-          </label>
-          <label class="field">
-            <span class="fieldLabel">Exclude practice</span>
-            <select id="analysisExcludePractice" class="select">
-              <option value="true" selected>Yes</option>
-              <option value="false">No</option>
-            </select>
-          </label>
-          <label class="field">
-            <span class="fieldLabel">Min trials per layout</span>
-            <input id="analysisMinTrials" class="select" type="number" min="1" max="50" step="1" value="5" />
-          </label>
-          <label class="field">
-            <span class="fieldLabel">Min elapsed (ms)</span>
-            <input id="analysisMinElapsed" class="select" type="number" min="0" step="100" value="2000" />
-          </label>
-          <label class="field">
-            <span class="fieldLabel">Max error rate</span>
-            <input id="analysisMaxErrorRate" class="select" type="number" min="0" max="1" step="0.01" value="0.4" />
-          </label>
-        </div>
+        <p class="hint">Data is loaded automatically from the per-participant sheets in the study spreadsheet.</p>
         <div class="studyButtons" style="margin-top: 10px">
           <button id="analysisFetchBtn" class="btn btnPrimary" type="button">Refresh analysis</button>
           <button id="downloadSummaryBtn" class="btn btnSecondary" type="button">Download summary CSV</button>
