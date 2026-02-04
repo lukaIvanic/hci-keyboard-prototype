@@ -11,6 +11,7 @@
     <script defer src="src/layouts.js"></script>
     <script defer src="src/metrics.js"></script>
     <script defer src="corpus/gutenberg/pg1342_bigrams.js"></script>
+    <script defer src="corpus/gutenberg/pg_trigrams.js"></script>
     <script defer src="src/theoryDistanceLinear.js"></script>
     <script defer src="src/keyboard.js"></script>
     <script defer src="src/geneticSearch.js"></script>
@@ -144,6 +145,7 @@
               <select id="scoringModelSelect" class="select" style="height: 32px">
                 <option value="standard">Standard (Fitts + digrams)</option>
                 <option value="linear">Legacy (Linear distance + digrams)</option>
+                <option value="linear-trigram">Legacy (Linear distance + trigrams)</option>
                 <option value="custom" disabled>Custom (coming soon)</option>
               </select>
               <span id="scoringModelHint" class="hint" style="margin: 0"></span>

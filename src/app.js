@@ -5,35 +5,78 @@
   const ns = window.KbdStudy;
 
   const DISTANCE_MODE_STORAGE_KEY = "KbdStudy.distanceMode.v1";
-  const DEFAULT_PRACTICE_TRIALS = 2;
+  const DEFAULT_PRACTICE_TRIALS = 0;
   const DEFAULT_TRIALS_PER_LAYOUT = 8;
   const DEV_SKIP_LEARNING = false;
   const DEV_SHOW_SKIP_PHASE = true;
   const GOOGLE_SHEETS_WEB_APP_URL =
-    "https://script.google.com/macros/s/AKfycbyeNsTI5KyoY3Y3zbRKCuAohHnIsMfKMLdJJy9lBXb2k7Chvo9hRAXC2kKqDsSDSYSqVA/exec";
+    "https://script.google.com/macros/s/AKfycbx4PP3wRy75ModduGrdnDzmhMhKOl05hPgiOxgJdqp5MeowhOiIIv8bVzBXXG8e9RhlAg/exec";
   const AUTO_SHEETS_UPLOAD = true;
 
   const PHRASES = [
-    "the quick brown fox",
-    "human computer interaction",
-    "a simple keyboard prototype",
-    "typing on a screen keyboard",
-    "we measure speed and errors",
-    "practice makes perfect",
-    "data is logged for analysis",
-    "edit distance counts mistakes",
-    "web based experiments are handy",
-    "layouts can be generated later",
+    "steady typing rhythm",
+    "move with calm taps",
+    "focus on each tap",
+    "letters feel nearby",
+    "keep a steady pace",
+    "short phrases help",
+    "tap and release keys",
+    "slow down a little",
+    "speed comes later",
+    "stay on the target",
+    "count each letter",
+    "press backspace once",
+    "small errors happen",
+    "letters feel closer",
+    "hands on the screen",
+    "smooth and simple",
+    "stay calm and steady",
+    "aim straight ahead",
+    "build muscle memory",
+    "practice with intent",
+    "one key at a time",
+    "letters flow well",
+    "feel the layout now",
+    "keep tempo steady",
+    "easy steady typing",
+    "smooth steady motion",
+    "letters are nearby",
+    "short clear words",
+    "hit the center point",
+    "HCI is awesome",
+    "steady and sure now",
+    "focus then tap once",
+    "gentle pressing pace",
+    "look then tap gently",
+    "slow and steady now",
+    "quick brown foxes",
+    "lazy dogs stay still",
+    "clear blue morning",
+    "silent night breeze",
+    "gentle steady tempo",
+    "calm focused typing",
+    "steady finger motion",
+    "center each letter",
+    "keep letters clear",
+    "letters stay aligned",
+    "tap with steady pace",
+    "quiet steady taps",
+    "smooth measured taps",
+    "clear target letters",
+    "focus and stay calm",
+    "track each character",
+    "tap each character",
+    "target letters ahead",
+    "keep your pace even",
+    "hold a steady pace",
   ];
 
   const LEARNING_ALPHABET = "abcdefghijklmnopqrstuvwxyz".split("");
   const LEARNING_BIGRAMS = ["th", "he", "in", "er", "an", "re", "on", "at", "en", "nd", "ti", "es"];
   const LEARNING_WORDS = ["the", "and", "for", "you", "not", "with"];
   const LEARNING_KIND_LABELS = {
-    "alpha-forward": "Alphabet (forward)",
-    "alpha-shuffled": "Alphabet (shuffled)",
-    bigram: "Bigrams",
-    word: "Short words",
+    "alpha-forward": "Alphabet",
+    phrase: "Sample phrase",
   };
 
   const CSV_COLUMNS = [
@@ -75,6 +118,18 @@
     { key: "tlxPerformance", label: "Performance" },
     { key: "tlxEffort", label: "Effort" },
     { key: "tlxFrustration", label: "Frustration" },
+  ];
+  const TLX_COLUMNS = [
+    "sessionId",
+    "participantId",
+    "layoutName",
+    "layoutIndex",
+    "tlxMental",
+    "tlxPhysical",
+    "tlxTemporal",
+    "tlxPerformance",
+    "tlxEffort",
+    "tlxFrustration",
   ];
 
   const state = {
@@ -296,14 +351,11 @@
     const queue = [];
     const alphabet = LEARNING_ALPHABET.join("");
     queue.push({ kind: "alpha-forward", target: alphabet, highlight: false, index: 1, total: 1 });
-    const shuffled = shuffleArray(LEARNING_ALPHABET).join("");
-    queue.push({ kind: "alpha-shuffled", target: shuffled, highlight: false, index: 1, total: 1 });
-    LEARNING_BIGRAMS.forEach((pair, idx) => {
-      queue.push({ kind: "bigram", target: pair, highlight: false, index: idx + 1, total: LEARNING_BIGRAMS.length });
-    });
-    LEARNING_WORDS.forEach((word, idx) => {
-      queue.push({ kind: "word", target: word, highlight: false, index: idx + 1, total: LEARNING_WORDS.length });
-    });
+    const phrasePool = shuffleArray(PHRASES.slice());
+    const phraseCount = Math.min(2, phrasePool.length);
+    for (let i = 0; i < phraseCount; i += 1) {
+      queue.push({ kind: "phrase", target: phrasePool[i], highlight: false, index: i + 1, total: phraseCount });
+    }
     return queue;
   }
 
@@ -326,21 +378,17 @@
       experiment.learningActive = false;
       experiment.learningQueue = [];
       experiment.learningIndex = 0;
-      resetPracticeForLayout();
       return;
     }
     experiment.learningQueue = buildLearningQueue();
     experiment.learningIndex = 0;
     experiment.learningActive = experiment.learningQueue.length > 0;
-    experiment.currentTrialIsPractice = false;
-    experiment.practiceRemaining = 0;
   }
 
   function completeLearningPhase() {
     experiment.learningActive = false;
     experiment.learningQueue = [];
     experiment.learningIndex = 0;
-    resetPracticeForLayout();
   }
 
   function currentTargetPhrase() {
@@ -368,7 +416,7 @@
   function currentTrialType() {
     if (isLearningPhase()) return "learning";
     if (!experiment.running) return "free";
-    return experiment.currentTrialIsPractice ? "practice" : "main";
+    return "main";
   }
 
   function currentLearningKind() {
@@ -700,13 +748,7 @@
   const FONT_STORAGE_KEY = "kbdFontSettings";
 
   function loadFontSettings() {
-    try {
-      const saved = localStorage.getItem(FONT_STORAGE_KEY);
-      if (saved) return JSON.parse(saved);
-    } catch (e) {
-      /* ignore */
-    }
-    return { family: "Inter", weight: "700", uppercase: true };
+    return { family: "Inter", weight: "500", uppercase: true };
   }
 
   function saveFontSettings(settings) {
@@ -812,7 +854,6 @@
 
   function completeTrial({ advancePhrase = true, advanceExperiment = true, showSummary = true } = {}) {
     if (wizardModalOpen || tlxModalOpen || experiment.awaitingTlx) return;
-    if (experiment.running && experiment.awaitingPracticeChoice) return;
     const trial = state.currentTrial;
     if (!trial) return;
     const didFinish = trial.finish(state.typed);
@@ -835,9 +876,9 @@
     trial.layoutOrder = Array.isArray(meta.layoutOrder) ? meta.layoutOrder.join("|") : "";
 
     if (experiment.running) {
-      trial.isPractice = experiment.currentTrialIsPractice;
+      trial.isPractice = false;
       trial.layoutIndex = experiment.layoutIndex + 1;
-      trial.trialIndex = experiment.currentTrialIsPractice ? 0 : experiment.trialInLayout + 1;
+      trial.trialIndex = isLearningPhase() ? 0 : experiment.trialInLayout + 1;
     } else {
       trial.isPractice = false;
       trial.layoutIndex = 0;
@@ -888,12 +929,13 @@
   function appendResultRow(trial) {
     const tbody = $("resultsTableBody");
     const tr = document.createElement("tr");
+    const phaseLabel = trial.trialType ? String(trial.trialType) : trial.isPractice ? "practice" : "main";
 
     const cells = [
       trial.trialId,
       trial.layoutId,
       trial.phraseId,
-      trial.isPractice ? "yes" : "no",
+      phaseLabel,
       ns.metrics.roundTo(trial.wpm ?? 0, 2),
       trial.editDistance ?? "",
       trial.backspaceCount ?? 0,
@@ -955,12 +997,116 @@
     ns.exporting.downloadJson(filename, raw);
   }
 
+  function sanitizeFilenamePart(value) {
+    const cleaned = String(value ?? "")
+      .trim()
+      .replace(/[^a-z0-9_-]+/gi, "_")
+      .replace(/^_+|_+$/g, "");
+    return cleaned || "unknown";
+  }
+
+  function buildTrialsCsv() {
+    const rows = state.session.trials.map(trialToRow);
+    return ns.exporting.toCsv(rows, CSV_COLUMNS);
+  }
+
+  function buildDetailsCsv() {
+    const rows = [];
+    state.session.trials.forEach((trial) => {
+      rows.push(...buildDetailRows(trial));
+    });
+    return ns.exporting.toCsv(rows, DETAIL_COLUMNS);
+  }
+
+  function buildTlxCsv() {
+    const meta = state.sessionMeta || createSessionMeta();
+    const map = ensureTlxByLayout(meta);
+    const order = Array.isArray(meta.layoutOrder) ? meta.layoutOrder : [];
+    const rows = Object.keys(map).map((layoutId) => {
+      const values = map[layoutId]?.values || {};
+      const layoutIndex = order.indexOf(layoutId);
+      return {
+        sessionId: meta.sessionId ?? "",
+        participantId: meta.participantId ?? "",
+        layoutName: layoutNameForId(layoutId),
+        layoutIndex: layoutIndex >= 0 ? layoutIndex + 1 : "",
+        tlxMental: values.tlxMental ?? "",
+        tlxPhysical: values.tlxPhysical ?? "",
+        tlxTemporal: values.tlxTemporal ?? "",
+        tlxPerformance: values.tlxPerformance ?? "",
+        tlxEffort: values.tlxEffort ?? "",
+        tlxFrustration: values.tlxFrustration ?? "",
+      };
+    });
+    return ns.exporting.toCsv(rows, TLX_COLUMNS);
+  }
+
+  async function downloadSessionZip() {
+    const ZipCtor = window.JSZip;
+    if (!ZipCtor) {
+      setZipModalStatus("Zip library failed to load.");
+      showToast("Zip library failed to load.");
+      return false;
+    }
+    const zip = new ZipCtor();
+    zip.file("trials.csv", buildTrialsCsv());
+    zip.file("details.csv", buildDetailsCsv());
+    zip.file("tlx.csv", buildTlxCsv());
+    const meta = state.sessionMeta || createSessionMeta();
+    const participant = sanitizeFilenamePart(meta.participantId || "participant");
+    const sessionId = sanitizeFilenamePart(meta.sessionId || "session");
+    const filename = `keyboard_${participant}_${sessionId}.zip`;
+    try {
+      const blob = await zip.generateAsync({ type: "blob" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 500);
+      return true;
+    } catch (err) {
+      setZipModalStatus("Failed to create ZIP.");
+      showToast("Failed to create ZIP.");
+      return false;
+    }
+  }
+
+  async function handleZipDownload({ closeOnSuccess = false } = {}) {
+    const ok = await downloadSessionZip();
+    if (ok) {
+      if (closeOnSuccess) closeZipModal();
+      showToast("ZIP download started.");
+    }
+    return ok;
+  }
+
+  async function handleZipModalDownload() {
+    const btn = document.getElementById("zipModalDownloadBtn");
+    if (btn) btn.disabled = true;
+    setZipModalStatus("Preparing ZIP...");
+    const ok = await downloadSessionZip();
+    if (ok) {
+      setZipModalStatus("Download started. You are finished! Hooray!");
+      if (btn) btn.textContent = "Downloaded";
+      return;
+    }
+    setZipModalStatus("Download failed. Please try again.");
+    if (btn) btn.disabled = false;
+  }
+
   function buildSheetPayload(trials = state.session.trials) {
     const rows = trials.map(trialToRow);
     const columns = CSV_COLUMNS.slice();
+    const session = state.sessionMeta || createSessionMeta();
+    const participantId = String(session?.participantId ?? "").trim();
     return {
+      kind: "trials",
+      sheet: participantId || "Unknown",
       exportedAtMs: Date.now(),
-      session: state.sessionMeta || createSessionMeta(),
+      session,
       columns,
       rows: rows.map((row) => columns.map((col) => row[col])),
     };
@@ -1208,10 +1354,10 @@
   const HIGHLIGHT_CLASSES = ["nextAction", "requiredField", "focusArea"];
   let lastGuidanceKey = "";
   let wizardStep = "setup";
-  let wizardIntroShown = false;
   let wizardModalOpen = false;
   let practiceModalOpen = false;
   let tlxModalOpen = false;
+  let zipModalOpen = false;
   let wizardModalCallback = null;
   let wizardModalButton = null;
   let tlxLayoutIdPending = null;
@@ -1251,7 +1397,7 @@
   }
 
   function syncModalOpenState() {
-    const open = practiceModalOpen || wizardModalOpen || tlxModalOpen;
+    const open = practiceModalOpen || wizardModalOpen || tlxModalOpen || zipModalOpen;
     document.body.classList.toggle("modalOpen", open);
   }
 
@@ -1281,10 +1427,10 @@
   }
 
   function resolveWizardStep() {
-    if (experiment.completed) return "results";
-    if (!experiment.running) return "setup";
+    if (!experiment.running) {
+      return experiment.completed ? "main" : "setup";
+    }
     if (isLearningPhase()) return "learning";
-    if (experiment.awaitingPracticeChoice || experiment.practiceRemaining > 0) return "practice";
     return "main";
   }
 
@@ -1292,7 +1438,7 @@
     const setup = $("stageSetup");
     const experimentStage = $("stageExperiment");
     const results = $("stageResults");
-    const showExperiment = step === "practice" || step === "main" || step === "learning";
+    const showExperiment = step === "main" || step === "learning";
     setup.classList.toggle("wizardStageActive", step === "setup");
     experimentStage.classList.toggle("wizardStageActive", showExperiment);
     results.classList.toggle("wizardStageActive", step === "results");
@@ -1307,40 +1453,6 @@
 
   function showWizardTransition(prevStep, nextStep) {
     if (prevStep === nextStep) return;
-    if (nextStep === "learning") {
-      const layoutLabel = currentLayoutLabel();
-      openWizardModal({
-        title: "Learning phase",
-        message: `Before trials, learn the ${layoutLabel} layout with short exercises.`,
-        buttonLabel: "Start learning",
-      });
-      return;
-    }
-    if (nextStep === "practice") {
-      const layoutLabel = currentLayoutLabel();
-      openWizardModal({
-        title: "Practice start",
-        message: `You will complete practice trials for ${layoutLabel} first. Use the on-screen keyboard and press Enter to submit each phrase.`,
-        buttonLabel: "Start practice",
-      });
-      return;
-    }
-    if (nextStep === "main") {
-      const layoutLabel = currentLayoutLabel();
-      openWizardModal({
-        title: "Main trials",
-        message: `Practice is done. Continue with the main trials for ${layoutLabel} and press Enter to submit each phrase.`,
-        buttonLabel: "Start main trials",
-      });
-      return;
-    }
-    if (nextStep === "results") {
-      openWizardModal({
-        title: "Session complete",
-        message: "Your session is complete. Download your results below.",
-        buttonLabel: "View results",
-      });
-    }
   }
 
   function updateWizardState() {
@@ -1348,15 +1460,6 @@
     const prevStep = wizardStep;
     wizardStep = nextStep;
     setWizardStage(nextStep);
-    if (!wizardIntroShown) {
-      wizardIntroShown = true;
-      openWizardModal({
-        title: "Welcome",
-        message: "Enter the participant ID to begin. You will be guided step-by-step.",
-        buttonLabel: "Begin setup",
-      });
-      return;
-    }
     showWizardTransition(prevStep, nextStep);
   }
 
@@ -1381,7 +1484,8 @@
   }
 
   function openPracticeModal() {
-    const modal = $("practiceModal");
+    const modal = document.getElementById("practiceModal");
+    if (!modal) return;
     modal.hidden = false;
     practiceModalOpen = true;
     syncModalOpenState();
@@ -1389,7 +1493,8 @@
   }
 
   function closePracticeModal() {
-    const modal = $("practiceModal");
+    const modal = document.getElementById("practiceModal");
+    if (!modal) return;
     modal.hidden = true;
     practiceModalOpen = false;
     syncModalOpenState();
@@ -1432,12 +1537,41 @@
     setAwaitingTlx(false);
   }
 
+  function setZipModalStatus(message) {
+    const statusEl = document.getElementById("zipModalStatus");
+    if (statusEl) statusEl.textContent = message ?? "";
+  }
+
+  function openZipModal() {
+    const modal = document.getElementById("zipModal");
+    if (!modal) return;
+    modal.hidden = false;
+    zipModalOpen = true;
+    syncModalOpenState();
+    setZipModalStatus("");
+    const btn = document.getElementById("zipModalDownloadBtn");
+    if (btn) {
+      btn.disabled = false;
+      markNextAction(btn);
+      focusGuidance(btn, "zip-download");
+    }
+  }
+
+  function closeZipModal() {
+    const modal = document.getElementById("zipModal");
+    if (!modal) return;
+    modal.hidden = true;
+    zipModalOpen = false;
+    syncModalOpenState();
+  }
+
   function updateExperimentStatus() {
     if (!experiment.running) {
       const statusText = experiment.completed
-        ? "Session complete. Download results or start a new session."
+        ? "Session complete."
         : "Idle.";
-      setText($("experimentStatus"), statusText);
+      const statusEl = document.getElementById("experimentStatus");
+      if (statusEl) statusEl.textContent = statusText;
       const statusRail = document.getElementById("experimentStatusRail");
       if (statusRail) statusRail.textContent = statusText;
       updateExperimentProgress();
@@ -1456,214 +1590,127 @@
       const item = currentLearningItem();
       statusText = `Learning • ${layoutText} • ${learningLabel(item)}`;
     } else {
-      const practiceLeft = experiment.practiceRemaining;
-      const practiceText = experiment.awaitingPracticeChoice
-        ? "Practice complete"
-        : practiceLeft > 0
-          ? `Practice (${practiceLeft} left)`
-          : "Main trials";
       const trialTotal = experiment.trialsPerLayout;
       const trialIndex = Math.min(experiment.trialInLayout + 1, trialTotal);
       const trialText = `Trial ${trialIndex}/${trialTotal}`;
-      statusText = `${practiceText} • ${layoutText} • ${trialText}`;
+      statusText = `Main trials • ${layoutText} • ${trialText}`;
     }
-    setText($("experimentStatus"), statusText);
+    const statusEl = document.getElementById("experimentStatus");
+    if (statusEl) statusEl.textContent = statusText;
     const statusRail = document.getElementById("experimentStatusRail");
     if (statusRail) statusRail.textContent = statusText;
     updateExperimentProgress();
   }
 
+  function renderPhaseList() {
+    const container = document.getElementById("phaseList");
+    if (!container) return;
+    container.innerHTML = "";
+
+    if (!experiment.running && !experiment.completed) {
+      const empty = document.createElement("div");
+      empty.className = "phaseRow phaseRowUpcoming";
+      empty.textContent = "Waiting to start...";
+      container.appendChild(empty);
+      return;
+    }
+
+    const layoutOrder = experiment.layoutOrder;
+    const currentLayoutIndex = experiment.layoutIndex;
+    const isCompleted = experiment.completed;
+
+    layoutOrder.forEach((layoutId, idx) => {
+      const layout = ns.layouts.getLayoutById(layoutId);
+      const layoutName = layout ? layout.name : layoutId;
+      
+      // Header for the layout group
+      const header = document.createElement("div");
+      header.className = "phaseGroupHeader";
+      header.textContent = layoutName;
+      container.appendChild(header);
+
+      // 1. Learning
+      const learningRow = document.createElement("div");
+      learningRow.className = "phaseRow";
+      const learningTotal = Math.max(1, 1 + Math.min(2, PHRASES.length));
+      let learningCount = 0;
+      
+      if (idx < currentLayoutIndex || isCompleted) {
+        learningRow.classList.add("phaseRowDone");
+        learningCount = learningTotal;
+      } else if (idx === currentLayoutIndex) {
+        if (isLearningPhase()) {
+          learningRow.classList.add("phaseRowActive");
+          learningCount = experiment.learningIndex + 1;
+        } else {
+          learningRow.classList.add("phaseRowDone");
+          learningCount = learningTotal;
+        }
+      } else {
+        learningRow.classList.add("phaseRowUpcoming");
+        learningCount = 0;
+      }
+      
+      learningRow.innerHTML = `
+        <span class="phaseLabel">Learning</span>
+        <span class="phaseCounter">${learningCount}/${learningTotal}</span>
+      `;
+      container.appendChild(learningRow);
+
+      // 2. Experiment
+      const expRow = document.createElement("div");
+      expRow.className = "phaseRow";
+      const expTotal = experiment.trialsPerLayout;
+      let expCount = 0;
+
+      if (idx < currentLayoutIndex || isCompleted) {
+        expRow.classList.add("phaseRowDone");
+        expCount = expTotal;
+      } else if (idx === currentLayoutIndex) {
+        if (isLearningPhase()) {
+          expRow.classList.add("phaseRowUpcoming");
+          expCount = 0;
+        } else if (experiment.awaitingTlx) {
+          expRow.classList.add("phaseRowDone");
+          expCount = expTotal;
+        } else {
+          expRow.classList.add("phaseRowActive");
+          expCount = experiment.trialInLayout + 1;
+        }
+      } else {
+        expRow.classList.add("phaseRowUpcoming");
+        expCount = 0;
+      }
+
+      expRow.innerHTML = `
+        <span class="phaseLabel">Experiment</span>
+        <span class="phaseCounter">${Math.min(expCount, expTotal)}/${expTotal}</span>
+      `;
+      container.appendChild(expRow);
+
+      // 3. Survey
+      const surveyRow = document.createElement("div");
+      surveyRow.className = "phaseRow";
+      
+      if (idx < currentLayoutIndex || isCompleted) {
+        surveyRow.classList.add("phaseRowDone");
+      } else if (idx === currentLayoutIndex) {
+        if (experiment.awaitingTlx) {
+          surveyRow.classList.add("phaseRowActive");
+        } else {
+          surveyRow.classList.add("phaseRowUpcoming");
+        }
+      } else {
+        surveyRow.classList.add("phaseRowUpcoming");
+      }
+
+      surveyRow.innerHTML = `<span class="phaseLabel">Survey</span>`;
+      container.appendChild(surveyRow);
+    });
+  }
+
   function updateExperimentProgress() {
-    clearGuidanceHighlights();
-    const stepper = $("experimentStepper");
-    const steps = ["Setup", "Learning", "Practice", "Main", "Download"];
-    let stageIndex = 0;
-    if (experiment.completed) stageIndex = 4;
-    else if (!experiment.running) stageIndex = 0;
-    else if (isLearningPhase()) stageIndex = 1;
-    else if (experiment.awaitingPracticeChoice || experiment.practiceRemaining > 0) stageIndex = 2;
-    else stageIndex = 3;
-
-    const phase = resolveWizardStep();
-    setPhaseAttributes(phase, experiment.running);
-
-    renderStepRow(stepper, steps, stageIndex, stageIndex);
-
-    const total = steps.length;
-    const pct = total > 1 ? Math.round((stageIndex / (total - 1)) * 100) : 0;
-    const fill = $("experimentProgressFill");
-    fill.style.width = `${pct}%`;
-
-    const practiceFill = $("experimentPracticeFill");
-    const mainFill = $("experimentMainFill");
-    const subLabel = $("experimentSubstepLabel");
-    const layoutStepper = $("experimentLayoutStepper");
-    const trialStepper = $("experimentTrialStepper");
-    const actionEl = $("experimentAction");
-    const participantEl = $("experimentParticipantId");
-    const startBtn = $("experimentStartBtn");
-    const submitBtn = $("submitTrialBtn");
-    const keyboardEl = $("keyboardContainer");
-    const downloadBtn = $("downloadCsvBtn");
-    const repeatBtn = $("practiceRepeatBtn");
-    const continueBtn = $("practiceContinueBtn");
-    const tlxSaveBtn = document.getElementById("tlxSaveBtn");
-    const phaseTitleEl = $("experimentPhaseTitle");
-    const phaseMetaEl = $("experimentPhaseMeta");
-    const phaseLeftEl = $("experimentTrialsLeft");
-    let detail = "Setup";
-    let phaseTitle = steps[stageIndex] ?? "Setup";
-    let phaseMeta = "";
-    let trialsLeftText = "";
-
-    if (experiment.awaitingTlx) {
-      phaseTitle = "NASA-TLX";
-      renderStepRow(layoutStepper, [], -1, 0);
-      renderStepRow(trialStepper, [], -1, 0);
-      subLabel.textContent = "NASA-TLX required";
-      detail = "NASA-TLX";
-      phaseMeta = "Complete NASA-TLX to continue.";
-      actionEl.innerHTML = "<strong>NASA-TLX:</strong> Please rate workload for the completed layout.";
-      if (tlxSaveBtn) {
-        markNextAction(tlxSaveBtn);
-        focusGuidance(tlxSaveBtn, "tlx-save");
-      }
-    } else if (experiment.awaitingPracticeChoice) {
-      phaseTitle = "Practice";
-      renderStepRow(layoutStepper, [], -1, 0);
-      renderStepRow(trialStepper, [], -1, 0);
-      subLabel.textContent = "Practice complete";
-      detail = "Practice";
-      phaseMeta = "Practice complete • Choose another round or continue.";
-      actionEl.innerHTML =
-        "<strong>Practice complete:</strong> Choose another practice round or continue to main trials.";
-      markNextAction(repeatBtn);
-      markRequired(continueBtn);
-      focusGuidance(repeatBtn, "practice-choice");
-    } else if (stageIndex === 0) {
-      phaseTitle = "Setup";
-      renderStepRow(layoutStepper, [], -1, 0);
-      renderStepRow(trialStepper, [], -1, 0);
-      subLabel.textContent = "";
-      detail = "Setup";
-      phaseMeta = "Enter participant ID, then start the session.";
-      actionEl.innerHTML = "<strong>Next:</strong> Enter participant ID, then click Start experiment to begin.";
-      markRequired(participantEl);
-      markNextAction(startBtn);
-      focusGuidance(participantEl, "setup");
-    } else if (stageIndex === 1) {
-      const layoutTotal = experiment.layoutOrder.length;
-      const layoutIndex = layoutTotal > 0 ? Math.min(experiment.layoutIndex + 1, layoutTotal) : 0;
-      const layoutLabel = currentLayoutLabel();
-      const layoutText = layoutTotal > 0 ? `Layout ${layoutIndex}/${layoutTotal}: ${layoutLabel}` : `Layout: ${layoutLabel}`;
-      const item = currentLearningItem();
-      const learningText = learningLabel(item);
-      renderStepRow(layoutStepper, [], -1, 0);
-      renderStepRow(trialStepper, [], -1, 0);
-      subLabel.textContent = `Learning • ${learningText}`;
-      detail = "Learning";
-      phaseTitle = "Learning";
-      phaseMeta = `${layoutText} • ${learningText}`;
-      trialsLeftText = experiment.learningQueue.length
-        ? `Exercises left: ${Math.max(0, experiment.learningQueue.length - experiment.learningIndex)}`
-        : "";
-      actionEl.innerHTML = "<strong>Learning:</strong> Follow the prompt to get familiar with this layout.";
-      markFocusArea(keyboardEl);
-      markNextAction(keyboardEl);
-      focusGuidance(keyboardEl, "learning");
-    } else if (stageIndex === 2) {
-      const totalPractice = experiment.practiceTrials;
-      const donePractice = Math.max(0, totalPractice - experiment.practiceRemaining);
-      const activePractice = donePractice < totalPractice ? donePractice : -1;
-      const practiceSteps = Array.from({ length: totalPractice }, (_, idx) => `Practice ${idx + 1}`);
-      renderStepRow(layoutStepper, [], -1, 0);
-      renderStepRow(trialStepper, practiceSteps, activePractice, donePractice);
-      subLabel.textContent = totalPractice
-        ? `Practice trials (${Math.min(donePractice + 1, totalPractice)} of ${totalPractice})`
-        : "";
-      detail = totalPractice
-        ? `Practice • Trial ${Math.min(donePractice + 1, totalPractice)}/${totalPractice}`
-        : "Practice";
-      phaseTitle = "Practice";
-      const layoutTotal = experiment.layoutOrder.length;
-      const layoutIndex = layoutTotal > 0 ? Math.min(experiment.layoutIndex + 1, layoutTotal) : 0;
-      const layoutLabel = currentLayoutLabel();
-      const layoutText = layoutTotal > 0 ? `Layout ${layoutIndex}/${layoutTotal}: ${layoutLabel}` : `Layout: ${layoutLabel}`;
-      const practiceText = totalPractice
-        ? `Practice ${Math.min(donePractice + 1, totalPractice)}/${totalPractice}`
-        : "Practice";
-      phaseMeta = `${layoutText} • ${practiceText}`;
-      if (experiment.practiceRemaining > 0) {
-        trialsLeftText = `Trials left: ${experiment.practiceRemaining}`;
-      }
-      actionEl.innerHTML = '<strong>Practice:</strong> Type the target phrase, then press Enter to submit.';
-      markFocusArea(keyboardEl);
-      markNextAction(submitBtn);
-      focusGuidance(keyboardEl, "practice");
-    } else if (stageIndex === 3) {
-      const layoutTotal = experiment.layoutOrder.length;
-      const layoutIndex = layoutTotal > 0 ? Math.min(experiment.layoutIndex, layoutTotal - 1) : 0;
-      const trialTotal = experiment.trialsPerLayout;
-      const trialIndex = Math.min(experiment.trialInLayout, Math.max(trialTotal - 1, 0));
-      const layoutSteps = Array.from({ length: layoutTotal }, (_, idx) => `Layout ${idx + 1}`);
-      const trialSteps = Array.from({ length: trialTotal }, (_, idx) => `Trial ${idx + 1}`);
-      renderStepRow(layoutStepper, layoutSteps, layoutIndex, experiment.layoutIndex);
-      renderStepRow(trialStepper, trialSteps, trialIndex, experiment.trialInLayout);
-      subLabel.textContent = layoutTotal ? `Main trials • Layout ${layoutIndex + 1} of ${layoutTotal}` : "Main trials";
-      detail = layoutTotal
-        ? `Main • Layout ${layoutIndex + 1}/${layoutTotal} • Trial ${trialIndex + 1}/${trialTotal}`
-        : "Main";
-      phaseTitle = "Main trials";
-      const layoutLabel = currentLayoutLabel();
-      const layoutText = layoutTotal > 0 ? `Layout ${layoutIndex + 1}/${layoutTotal}: ${layoutLabel}` : `Layout: ${layoutLabel}`;
-      const trialText = `Trial ${trialIndex + 1}/${trialTotal}`;
-      phaseMeta = `${layoutText} • ${trialText}`;
-      const totalMainTrials = layoutTotal * trialTotal;
-      const doneMainTrials = experiment.layoutIndex * trialTotal + experiment.trialInLayout;
-      if (totalMainTrials > 0) {
-        trialsLeftText = `Trials left: ${Math.max(0, totalMainTrials - doneMainTrials)}`;
-      }
-      actionEl.innerHTML = `<strong>Main trials:</strong> ${currentLayoutLabel()} • Type the phrase, then press Enter to submit.`;
-      markFocusArea(keyboardEl);
-      markNextAction(submitBtn);
-      focusGuidance(keyboardEl, "main");
-    } else {
-      phaseTitle = "Download";
-      renderStepRow(layoutStepper, [], -1, 0);
-      renderStepRow(trialStepper, [], -1, 0);
-      subLabel.textContent = "";
-      detail = "Download";
-      phaseMeta = "Session complete. Save your results.";
-      actionEl.innerHTML = "<strong>Download:</strong> Save your results, or start a new session.";
-      markNextAction(downloadBtn);
-      focusGuidance(downloadBtn, "download");
-    }
-
-    const totalPractice = experiment.practiceTrials;
-    const donePractice = experiment.awaitingPracticeChoice
-      ? totalPractice
-      : Math.max(0, totalPractice - experiment.practiceRemaining);
-    const practicePct = totalPractice > 0 ? Math.round((donePractice / totalPractice) * 100) : 0;
-    const layoutTotal = experiment.layoutOrder.length;
-    const trialTotal = experiment.trialsPerLayout;
-    const totalMainTrials = layoutTotal * trialTotal;
-    const doneMainTrials = experiment.completed ? totalMainTrials : experiment.layoutIndex * trialTotal + experiment.trialInLayout;
-    const mainPct = totalMainTrials > 0 ? Math.round((doneMainTrials / totalMainTrials) * 100) : 0;
-    practiceFill.style.width = `${Math.min(practicePct, 100)}%`;
-    mainFill.style.width = `${Math.min(mainPct, 100)}%`;
-
-    phaseTitleEl.textContent = phaseTitle;
-    phaseMetaEl.textContent = phaseMeta;
-    phaseLeftEl.textContent = trialsLeftText;
-
-    subLabel.style.display = subLabel.textContent ? "block" : "none";
-    $("experimentProgressLabel").textContent = `Stage ${stageIndex + 1} of ${total} • ${detail} (${total - stageIndex - 1} left)`;
-    setSubmitReady((stageIndex === 2 || stageIndex === 3) && !experiment.awaitingPracticeChoice && !experiment.awaitingTlx);
-    if (wizardModalOpen && wizardModalButton) {
-      clearGuidanceHighlights();
-      markNextAction(wizardModalButton);
-      focusGuidance(wizardModalButton, "wizard-modal");
-    }
+    renderPhaseList();
     updateWizardState();
     updateTlxStatus();
   }
@@ -1719,19 +1766,7 @@
     if (experiment.running || wizardModalOpen) return;
     const settings = readExperimentSettings();
     const layoutOrder = resolveLayoutOrder(settings.orderMode, settings.orderSeed);
-    const layoutCount = layoutOrder.length;
-    const practiceCount = settings.practiceTrials;
-    const trialsPerLayout = settings.trialsPerLayout;
-    const layoutLabel = layoutCount === 1 ? "layout" : "layouts";
-    const trialLabel = trialsPerLayout === 1 ? "trial" : "trials";
-    const practiceLabel = practiceCount === 1 ? "practice trial" : "practice trials";
-    const message = `Each layout starts with a learning phase, then ${practiceCount} ${practiceLabel}, then ${trialsPerLayout} ${trialLabel}. Total layouts: ${layoutCount}.`;
-    openWizardModal({
-      title: "Session overview",
-      message,
-      buttonLabel: "Start session",
-      onContinue: () => startExperimentWithSettings(settings, layoutOrder),
-    });
+    startExperimentWithSettings(settings, layoutOrder);
   }
 
   function stopExperiment(options = {}) {
@@ -1760,6 +1795,9 @@
     setExperimentUiRunning(false);
     setControlTrayOpen(true);
     updateExperimentStatus();
+    if (completed && !zipModalOpen) {
+      openZipModal();
+    }
   }
 
   function advanceLearningAfterSubmit() {
@@ -1792,17 +1830,6 @@
   }
 
   function advanceExperimentAfterSubmit() {
-    if (experiment.practiceRemaining > 0) {
-      experiment.practiceRemaining -= 1;
-      experiment.currentTrialIsPractice = experiment.practiceRemaining > 0;
-      if (experiment.practiceRemaining === 0) {
-        openPracticeModal();
-      }
-      updateExperimentStatus();
-      return;
-    }
-
-    experiment.currentTrialIsPractice = false;
     experiment.trialInLayout += 1;
 
     if (experiment.trialInLayout >= experiment.trialsPerLayout) {
@@ -1836,17 +1863,6 @@
       updateExperimentStatus();
       return;
     }
-    if (experiment.awaitingPracticeChoice) {
-      handlePracticeContinue();
-      return;
-    }
-
-    if (experiment.practiceRemaining > 0) {
-      experiment.practiceRemaining = 0;
-      experiment.currentTrialIsPractice = false;
-      updateExperimentStatus();
-      return;
-    }
 
     experiment.layoutIndex += 1;
     experiment.trialInLayout = 0;
@@ -1858,8 +1874,9 @@
     state.layoutId = experiment.layoutOrder[experiment.layoutIndex];
     renderLayoutSelect();
     renderKeyboard();
+    startLearningForLayout();
+    renderTarget();
     resetTrial();
-    resetPracticeForLayout();
     updateExperimentStatus();
   }
 
@@ -1888,11 +1905,15 @@
     if (nextBtn) nextBtn.addEventListener("click", nextPhrase);
     $("downloadCsvBtn").addEventListener("click", downloadCsv);
     $("downloadJsonBtn").addEventListener("click", downloadJson);
+    const zipBtn = document.getElementById("downloadZipBtn");
+    if (zipBtn) zipBtn.addEventListener("click", () => handleZipDownload({ closeOnSuccess: false }));
     $("sendSheetBtn").addEventListener("click", sendToGoogleSheets);
     $("clearResultsBtn").addEventListener("click", clearResults);
     $("experimentStartBtn").addEventListener("click", handleStartExperiment);
     $("experimentStopBtn").addEventListener("click", stopExperiment);
     $("experimentSkipBtn").addEventListener("click", skipExperimentPhase);
+    const zipModalBtn = document.getElementById("zipModalDownloadBtn");
+    if (zipModalBtn) zipModalBtn.addEventListener("click", handleZipModalDownload);
     const skipPhaseBtn = document.getElementById("experimentSkipPhaseBtn");
     const devControls = document.getElementById("experimentDevControls");
     if (devControls) devControls.style.display = DEV_SHOW_SKIP_PHASE ? "block" : "none";
@@ -1901,8 +1922,6 @@
     // Font testing controls
     initFontControls();
 
-    $("practiceRepeatBtn").addEventListener("click", handlePracticeRepeat);
-    $("practiceContinueBtn").addEventListener("click", handlePracticeContinue);
     $("wizardModalContinue").addEventListener("click", () => {
       const cb = wizardModalCallback;
       closeWizardModal();

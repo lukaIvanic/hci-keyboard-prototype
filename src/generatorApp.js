@@ -68,6 +68,7 @@
     keys: null,
     target: null,
     corpus: null,
+    trigramCorpus: null,
   };
 
   let lastGaStats = null;
@@ -117,6 +118,7 @@
 
   function normalizeScoringModel(mode) {
     if (mode === "linear") return "linear";
+    if (mode === "linear-trigram") return "linear-trigram";
     return mode === "custom" ? "custom" : "standard";
   }
 
@@ -136,6 +138,8 @@
     if (hint) {
       if (scoringModel === "linear") {
         hint.textContent = "Legacy linear distance + digram scoring.";
+      } else if (scoringModel === "linear-trigram") {
+        hint.textContent = "Legacy linear distance + trigram scoring.";
       } else if (scoringModel === "custom") {
         hint.textContent = "Custom scoring not implemented yet.";
       } else {
@@ -162,7 +166,8 @@
     const legacyInput = document.getElementById("targetWpmLegacyInput");
     const useBothBtn = document.getElementById("targetUseQwertyBothBtn");
     const enableStandard = objectiveMode === "dual" || (objectiveMode === "target" && scoringModel !== "linear");
-    const enableLegacy = objectiveMode === "dual" || (objectiveMode === "target" && scoringModel === "linear");
+    const enableLegacy =
+      objectiveMode === "dual" || (objectiveMode === "target" && (scoringModel === "linear" || scoringModel === "linear-trigram"));
     if (standardInput) standardInput.disabled = !enableStandard;
     if (legacyInput) legacyInput.disabled = !enableLegacy;
     if (useBothBtn) useBothBtn.disabled = objectiveMode !== "dual";
@@ -208,8 +213,9 @@
       }
       return;
     }
-    const activeTarget = scoringModel === "linear" ? targetWpmLegacy : targetWpmStandard;
-    const label = scoringModel === "linear" ? "legacy" : "standard";
+    const isLegacyModel = scoringModel === "linear" || scoringModel === "linear-trigram";
+    const activeTarget = isLegacyModel ? targetWpmLegacy : targetWpmStandard;
+    const label = isLegacyModel ? "legacy" : "standard";
     statusEl.textContent = Number.isFinite(activeTarget)
       ? `Target (${label}) set to ${ns.metrics.roundTo(activeTarget, 2)} wpm.`
       : `Enter ${label} target WPM.`;
@@ -235,7 +241,7 @@
   }
 
   function activeTargetForSingle() {
-    return scoringModel === "linear" ? targetWpmLegacy : targetWpmStandard;
+    return scoringModel === "linear" || scoringModel === "linear-trigram" ? targetWpmLegacy : targetWpmStandard;
   }
 
   function computeFitnessSingle(predictedWpm) {
@@ -274,7 +280,7 @@
   }
 
   function distanceModeLabelForModel(model) {
-    return model === "linear" ? "center+edge" : "center";
+    return model === "linear" || model === "linear-trigram" ? "center+edge" : "center";
   }
 
   function syncGaUiFromParams(params) {
@@ -344,6 +350,16 @@
   function getCorpusCached() {
     if (!cached.corpus) cached.corpus = requireGutenbergCorpus();
     return cached.corpus;
+  }
+
+  function getTrigramCorpusCached() {
+    if (!cached.trigramCorpus) cached.trigramCorpus = requireGutenbergTrigramCorpus();
+    return cached.trigramCorpus;
+  }
+
+  function getCorpusForScoring() {
+    if (objectiveMode === "dual") return getCorpusCached();
+    return scoringModel === "linear-trigram" ? getTrigramCorpusCached() : getCorpusCached();
   }
 
   function normalizeSizesMode(sizesMode) {
@@ -494,6 +510,14 @@
       .join("");
   }
 
+  function formatCorpusId(corpus) {
+    if (Array.isArray(corpus?.bookIds) && corpus.bookIds.length) {
+      return `pg${corpus.bookIds.join(",")}`;
+    }
+    if (Number.isFinite(corpus?.bookId)) return `pg${corpus.bookId}`;
+    return "pg?";
+  }
+
   function requireGutenbergCorpus() {
     const corpus = ns.corpus?.gutenberg;
     if (!corpus) throw new Error("Missing corpus: ns.corpus.gutenberg is not loaded");
@@ -503,6 +527,20 @@
     if (!Number.isFinite(corpus.totalBigrams) || corpus.totalBigrams <= 0) throw new Error("Invalid corpus: totalBigrams must be > 0");
     if (!ns.theory?.distanceLinear?.estimateLayoutFromBigramCountsFitts) {
       throw new Error("Missing scorer: ns.theory.distanceLinear.estimateLayoutFromBigramCountsFitts");
+    }
+    return corpus;
+  }
+
+  function requireGutenbergTrigramCorpus() {
+    const corpus = ns.corpus?.gutenbergTrigrams;
+    if (!corpus) throw new Error("Missing corpus: ns.corpus.gutenbergTrigrams is not loaded");
+    if (!Array.isArray(corpus.countsFlat)) throw new Error("Invalid corpus: missing countsFlat");
+    if (typeof corpus.alphabet !== "string") throw new Error("Invalid corpus: missing alphabet");
+    if (!Number.isFinite(corpus.totalTrigrams) || corpus.totalTrigrams <= 0) {
+      throw new Error("Invalid corpus: totalTrigrams must be > 0");
+    }
+    if (!ns.theory?.distanceLinear?.estimateLayoutFromTrigramCounts) {
+      throw new Error("Missing scorer: ns.theory.distanceLinear.estimateLayoutFromTrigramCounts");
     }
     return corpus;
   }
@@ -585,11 +623,30 @@
     };
   }
 
+  function scoreLayoutLinearTrigram(layout) {
+    const corpus = getTrigramCorpusCached();
+    const base = ns.theory.distanceLinear.estimateLayoutFromTrigramCounts(layout, corpus, LINEAR_PARAMS);
+    const { minDim, penaltyMs } = computeSizePenalty(layout);
+    const legacyPixelPenaltyMs = computeLegacyPixelPenalty(layout);
+    const avgMsPerChar = (base.avgMsPerChar ?? 0) + penaltyMs + legacyPixelPenaltyMs;
+    const predictedWpm = ns.metrics.computeWpm(1, avgMsPerChar);
+    return {
+      predictedWpm,
+      avgMsPerChar,
+      minKeyDim: minDim,
+      sizePenaltyMs: penaltyMs,
+      legacyPixelPenaltyMs,
+    };
+  }
+
   function scoreLayout(layout) {
-    // Fail fast: no silent fallback. Generator requires Gutenberg bigrams.
+    // Fail fast: no silent fallback. Generator requires Gutenberg corpus.
     getCorpusCached();
     if (scoringModel === "linear") {
       return scoreLayoutLinear(layout);
+    }
+    if (scoringModel === "linear-trigram") {
+      return scoreLayoutLinearTrigram(layout);
     }
     if (scoringModel === "custom") {
       return scoreLayoutStandard(layout);
@@ -611,13 +668,23 @@
     return Number.isFinite(scored?.predictedWpm) ? scored.predictedWpm : null;
   }
 
+  function computeQwertyWpmLegacyTrigram() {
+    const qwerty = ns.layouts.getLayoutById("qwerty");
+    if (!qwerty) return null;
+    const scored = scoreLayoutLinearTrigram(qwerty);
+    return Number.isFinite(scored?.predictedWpm) ? scored.predictedWpm : null;
+  }
+
   function updateQwertyWpm() {
     const stdEl = document.getElementById("qwertyWpmValueStandard");
     const legacyEl = document.getElementById("qwertyWpmValueLegacy");
     if (!stdEl && !legacyEl) return;
     try {
       const wpmStandard = computeQwertyWpmStandard();
-      const wpmLegacy = computeQwertyWpmLegacy();
+      const wpmLegacy =
+        scoringModel === "linear-trigram" && objectiveMode !== "dual"
+          ? computeQwertyWpmLegacyTrigram()
+          : computeQwertyWpmLegacy();
       if (stdEl) stdEl.textContent = Number.isFinite(wpmStandard) ? String(ns.metrics.roundTo(wpmStandard, 2)) : "—";
       if (legacyEl) legacyEl.textContent = Number.isFinite(wpmLegacy) ? String(ns.metrics.roundTo(wpmLegacy, 2)) : "—";
     } catch {
@@ -729,7 +796,7 @@
 
     let corpus = null;
     try {
-      corpus = getCorpusCached();
+      corpus = getCorpusForScoring();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       state.fatalError = message;
@@ -749,6 +816,8 @@
         ? "Standard+Legacy"
         : scoringModel === "linear"
         ? "Legacy (Linear+digram)"
+        : scoringModel === "linear-trigram"
+        ? "Legacy (Linear+trigram)"
         : scoringModel === "custom"
         ? "Custom (coming soon)"
         : "Standard (Fitts+digram)";
@@ -757,7 +826,9 @@
       objectiveMode === "dual"
         ? `std:${distanceModeLabelForModel("standard")}, legacy:${distanceModeLabelForModel("linear")}`
         : distanceModeLabelForModel(scoringModel);
-    const scoring = `Scoring: ${scoringModelLabel} • Gutenberg bigrams (pg${corpus.bookId}) • dist=${distLabel} • ${penaltyLabel}`;
+    const corpusLabel =
+      scoringModel === "linear-trigram" && objectiveMode !== "dual" ? "Gutenberg trigrams" : "Gutenberg bigrams";
+    const scoring = `Scoring: ${scoringModelLabel} • ${corpusLabel} (${formatCorpusId(corpus)}) • dist=${distLabel} • ${penaltyLabel}`;
     const objective =
       objectiveMode === "dual"
         ? `Objective: Match std ${Number.isFinite(targetWpmStandard) ? ns.metrics.roundTo(targetWpmStandard, 2) : "—"} + legacy ${
@@ -794,7 +865,16 @@
     )}" • Total bigrams: ${ns.metrics.roundTo(corpus.totalBigrams, 0).toLocaleString()} • Generated: ${
       corpus.generatedAt ?? "—"
     }`;
-    setText($("corpusMeta"), meta);
+    const trigramCorpus = ns.corpus?.gutenbergTrigrams;
+    let metaText = meta;
+    if (trigramCorpus && Number.isFinite(trigramCorpus.totalTrigrams)) {
+      const trigramIds = formatCorpusId(trigramCorpus);
+      metaText += `\nTrigrams: ${trigramIds} • Total trigrams: ${ns.metrics.roundTo(
+        trigramCorpus.totalTrigrams,
+        0
+      ).toLocaleString()} • Generated: ${trigramCorpus.generatedAt ?? "—"}`;
+    }
+    setText($("corpusMeta"), metaText);
 
     // Top 60 bigrams by count
     const K = corpus.alphabet.length;

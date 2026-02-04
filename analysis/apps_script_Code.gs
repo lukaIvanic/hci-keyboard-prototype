@@ -22,17 +22,24 @@ function doPost(e) {
   lock.tryLock(20000);
   try {
     const payload = safeJson(e && e.postData && e.postData.contents);
-    const kind = String(payload.kind || "").toLowerCase();
+    const rawKind = String(payload.kind || "").toLowerCase();
+    const sheetHint = String(payload.sheet || "").trim();
     const columns = Array.isArray(payload.columns) ? payload.columns.slice() : [];
     const rows = Array.isArray(payload.rows) ? payload.rows : [];
     const session = payload.session || {};
     const participantId = String(session.participantId || "").trim();
+    const isDetailSheet = /_details$/i.test(sheetHint);
+    const isDetailColumns =
+      columns.indexOf("eventIndex") >= 0 ||
+      columns.indexOf("keyType") >= 0 ||
+      columns.indexOf("timestampMs") >= 0;
+    const kind = rawKind || (isDetailSheet || isDetailColumns ? "details" : "trials");
     const sheetName =
       kind === "tlx"
-        ? sanitizeSheetName(String(payload.sheet || "TLX"))
+        ? sanitizeSheetName(sheetHint || "TLX")
         : kind === "details"
-          ? sanitizeSheetName(String(payload.sheet || `${participantId || "Unknown"}_details`))
-          : sanitizeSheetName(participantId || "Unknown");
+          ? sanitizeSheetName(sheetHint || `${participantId || "Unknown"}_details`)
+          : sanitizeSheetName(sheetHint || participantId || "Unknown");
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const participantResult =
       kind === "tlx"

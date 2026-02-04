@@ -153,6 +153,80 @@
   }
 
   /**
+   * Estimate layout speed from a trigram model (letters + space).
+   *
+   * corpus:
+   * - { alphabet: string, countsFlat: number[], totalTrigrams: number }
+   *
+   * Interpretation:
+   * - We compute expected movement distance over trigrams (a -> b -> c)
+   * - Each trigram contributes distance(a,b) + distance(b,c)
+   * - Avg time per char ~= tapTimeMs + moveMsPerUnit * E[distance per transition]
+   */
+  function estimateLayoutFromTrigramCounts(layout, corpus, params) {
+    const tapTimeMs = params?.tapTimeMs ?? 140;
+    const moveMsPerUnit = params?.moveMsPerUnit ?? 35;
+
+    const alphabet = String(corpus?.alphabet ?? "");
+    const countsFlat = corpus?.countsFlat;
+    const totalTrigrams = Number(corpus?.totalTrigrams ?? 0);
+
+    if (!alphabet || !Array.isArray(countsFlat) || alphabet.length * alphabet.length * alphabet.length !== countsFlat.length) {
+      throw new Error("Invalid trigram corpus: expected {alphabet, countsFlat} with K*K*K entries");
+    }
+    if (!Number.isFinite(totalTrigrams) || totalTrigrams <= 0) {
+      throw new Error("Invalid trigram corpus: totalTrigrams must be > 0");
+    }
+
+    const K = alphabet.length;
+    const keys = new Array(K);
+    for (let i = 0; i < K; i++) {
+      const ch = alphabet[i];
+      const keyId = corpusCharToKeyId(ch);
+      keys[i] = ns.layouts.getKey(layout, keyId);
+    }
+
+    let distSum = 0;
+    let usedTrigrams = 0;
+    let usedTransitions = 0;
+
+    for (let a = 0; a < K; a++) {
+      const ka = keys[a];
+      if (!ka) continue;
+      for (let b = 0; b < K; b++) {
+        const kb = keys[b];
+        if (!kb) continue;
+        const dAB = distanceBetweenKeys(ka, kb, params);
+        if (dAB == null) continue;
+        for (let c = 0; c < K; c++) {
+          const count = countsFlat[(a * K + b) * K + c] || 0;
+          if (count <= 0) continue;
+          const kc = keys[c];
+          if (!kc) continue;
+          const dBC = distanceBetweenKeys(kb, kc, params);
+          if (dBC == null) continue;
+          distSum += count * (dAB + dBC);
+          usedTrigrams += count;
+          usedTransitions += count * 2;
+        }
+      }
+    }
+
+    const expDist = usedTransitions > 0 ? distSum / usedTransitions : 0;
+    const avgMsPerChar = tapTimeMs + moveMsPerUnit * expDist;
+    const predictedWpm = ns.metrics.computeWpm(1, avgMsPerChar);
+
+    return {
+      predictedWpm,
+      avgMsPerChar,
+      expDist,
+      usedTrigrams,
+      totalTrigrams,
+      coverage: usedTrigrams / totalTrigrams,
+    };
+  }
+
+  /**
    * Estimate layout speed from a bigram model (letters + space) using Shannon Fitts' Law.
    *
    * corpus:
@@ -263,6 +337,7 @@
     estimatePhraseTime,
     estimateLayout,
     estimateLayoutFromBigramCounts,
+    estimateLayoutFromTrigramCounts,
     estimateLayoutFromBigramCountsFitts,
   };
 })();

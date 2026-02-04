@@ -265,12 +265,13 @@ body[data-session-running="true"] .wizardStatus {
 }
 
 .experimentRail {
-  display: grid;
-  grid-template-rows: auto auto auto 1fr auto;
+  display: flex;
+  flex-direction: column;
   gap: 10px;
   padding: 10px 8px;
   border-right: 1px solid var(--border);
   background: rgba(0, 0, 0, 0.25);
+  overflow: hidden;
 }
 
 .railBlock {
@@ -278,52 +279,78 @@ body[data-session-running="true"] .wizardStatus {
   gap: 8px;
 }
 
-.experimentRail .stepper {
-  flex-direction: column;
-  align-items: stretch;
-  gap: 6px;
-  position: relative;
-  padding-left: 14px;
+.phaseList {
+  display: grid;
+  gap: 10px;
+  padding: 6px 6px 12px;
+  overflow-y: auto;
+  min-height: 0;
+  flex: 1;
 }
 
-.experimentRail .step {
-  width: 100%;
-  text-align: left;
-  position: relative;
-  padding-left: 10px;
+.phaseGroupHeader {
+  margin-top: 8px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--muted);
+  opacity: 0.85;
 }
 
-.experimentRail .step::before {
+.phaseGroupHeader:first-child {
+  margin-top: 0;
+}
+
+.phaseRow {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radiusSmall);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.18);
+  font-size: 12.5px;
+  color: var(--text);
+}
+
+.phaseRowActive {
+  border-color: color-mix(in srgb, var(--phase-accent), transparent 30%);
+  background: color-mix(in srgb, var(--phase-accent), transparent 88%);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--phase-accent), transparent 65%);
+}
+
+.phaseRowActive::before {
   content: "";
   position: absolute;
-  left: -12px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  border: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.04);
+  left: 6px;
+  top: 12%;
+  bottom: 12%;
+  width: 3px;
+  border-radius: 999px;
+  background: var(--phase-accent);
 }
 
-.experimentRail .step:not(:last-child)::after {
-  content: "";
-  position: absolute;
-  left: -8px;
-  top: calc(50% + 6px);
-  width: 2px;
-  height: calc(100% + 4px);
-  background: rgba(255, 255, 255, 0.12);
+.phaseRowDone {
+  color: rgba(242, 245, 255, 0.9);
+  border-color: rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.05);
 }
 
-.experimentRail .stepActive::before {
-  border-color: rgba(106, 166, 255, 0.7);
-  background: rgba(106, 166, 255, 0.35);
+.phaseRowUpcoming {
+  color: rgba(169, 179, 208, 0.72);
+  border-color: rgba(255, 255, 255, 0.06);
+  background: rgba(0, 0, 0, 0.18);
 }
 
-.experimentRail .stepDone::before {
-  border-color: rgba(255, 255, 255, 0.4);
-  background: rgba(255, 255, 255, 0.15);
+.phaseLabel {
+  font-weight: 600;
+}
+
+.phaseCounter {
+  font-size: 11.5px;
+  color: var(--muted);
 }
 
 .experimentMain {
@@ -472,6 +499,7 @@ body[data-session-running="true"] .wizardStatus {
   background: rgba(0, 0, 0, 0.25);
   font-size: var(--phrase-font-size);
   line-height: var(--phrase-line-height);
+  text-transform: var(--kbd-char-transform);
   white-space: pre-wrap;
 }
 
@@ -504,6 +532,7 @@ body[data-session-running="true"] .wizardStatus {
   background: rgba(0, 0, 0, 0.25);
   font-size: var(--phrase-font-size);
   line-height: var(--phrase-line-height);
+  text-transform: var(--kbd-char-transform);
   white-space: pre-wrap;
 }
 
@@ -1136,49 +1165,9 @@ body[data-session-running="true"] .controlTrayDetails {
   gap: 6px;
 }
 
-.phaseTitle {
-  margin: 0;
-  font-size: clamp(18px, 2vw, 24px);
-  letter-spacing: 0.4px;
-}
-
-.phaseMeta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  font-size: clamp(13px, 1.3vw, 15px);
-  color: rgba(242, 245, 255, 0.92);
-}
-
-.phaseMetaMuted {
-  font-size: clamp(12px, 1.1vw, 13px);
-  color: var(--muted);
-}
-
 .hudDetail {
   display: grid;
   gap: 6px;
-}
-
-.progressLabel {
-  font-size: 14px;
-  color: var(--muted);
-  margin-bottom: 6px;
-}
-
-.callout {
-  margin-top: 8px;
-  padding: 10px 12px;
-  border-radius: var(--radiusSmall);
-  border: 1px solid color-mix(in srgb, var(--phase-accent), transparent 35%);
-  background: color-mix(in srgb, var(--phase-accent), transparent 85%);
-  font-size: 13px;
-  color: var(--text);
-}
-
-.callout strong {
-  color: var(--text);
-  font-weight: 700;
 }
 
 .nextAction,

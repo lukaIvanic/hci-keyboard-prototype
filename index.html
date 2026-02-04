@@ -15,6 +15,7 @@
     <script defer src="src/exportCsv.js"></script>
     <script defer src="src/theoryDistanceLinear.js"></script>
     <script defer src="src/keyboard.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
     <script defer src="src/app.js"></script>
   </head>
   <body class="typingPage">
@@ -78,8 +79,8 @@
                   <span
                     class="infoIcon"
                     tabindex="0"
-                    aria-label="Skips remaining practice, or moves to the next layout."
-                    data-tip="Skips remaining practice, or moves to the next layout."
+                    aria-label="Skips remaining learning, or moves to the next layout."
+                    data-tip="Skips remaining learning, or moves to the next layout."
                     >i</span
                   >
                 </span>
@@ -91,66 +92,10 @@
         <div id="stageExperiment" class="wizardStage">
           <div class="experimentLayout">
             <aside class="experimentRail">
-              <div class="railBlock">
-                <div class="phaseTitle" id="experimentPhaseTitle">Setup</div>
-                <div class="phaseMeta">
-                  <span id="experimentPhaseMeta">Waiting to start.</span>
-                  <span id="experimentTrialsLeft" class="phaseMetaMuted"></span>
-                </div>
-              </div>
-              <div class="railBlock">
-                <div class="progressBar progressBarLarge" aria-label="Session progress">
-                  <div id="experimentProgressFill" class="progressFill"></div>
-                </div>
-                <div class="progressRow">
-                  <div class="progressBar progressBarSmall" aria-label="Practice progress">
-                    <div id="experimentPracticeFill" class="progressFill progressFillPractice"></div>
-                  </div>
-                  <div class="progressBar progressBarSmall" aria-label="Main trial progress">
-                    <div id="experimentMainFill" class="progressFill progressFillMain"></div>
-                  </div>
-                </div>
-              </div>
-              <div class="railBlock">
-                <div id="experimentStepper" class="stepper"></div>
-                <div id="experimentProgressLabel" class="progressLabel"></div>
-                <div id="experimentSubstepLabel" class="hint wizardHidden"></div>
-                <div id="experimentLayoutStepper" class="stepper stepperDense wizardHidden"></div>
-                <div id="experimentTrialStepper" class="stepper stepperDense wizardHidden"></div>
-              </div>
-              <div id="experimentAction" class="callout railCallout" role="status" aria-live="polite"></div>
-              <div id="experimentStatus" class="hint wizardStatus">Idle.</div>
+              <div id="phaseList" class="phaseList"></div>
               <div id="experimentDevControls" class="railBlock devControls">
                 <button id="experimentSkipPhaseBtn" class="btn btnSecondary" type="button">Skip current phase</button>
               </div>
-              <details class="fontControls" open>
-                <summary>Font testing</summary>
-                <div class="fontControlRow">
-                  <label for="kbdFontSelect">Font family</label>
-                  <select id="kbdFontSelect">
-                    <option value="Inter">Inter</option>
-                    <option value="Atkinson Hyperlegible">Atkinson Hyperlegible</option>
-                    <option value="Lexend">Lexend</option>
-                    <option value="Source Sans 3">Source Sans 3</option>
-                    <option value="inherit">System default</option>
-                  </select>
-                </div>
-                <div class="fontControlRow">
-                  <label for="kbdWeightSelect">Font weight</label>
-                  <select id="kbdWeightSelect">
-                    <option value="400">400 (Regular)</option>
-                    <option value="500">500 (Medium)</option>
-                    <option value="600">600 (SemiBold)</option>
-                    <option value="700" selected>700 (Bold)</option>
-                  </select>
-                </div>
-                <div class="fontControlRow">
-                  <label class="fontControlCheckbox">
-                    <input type="checkbox" id="kbdUppercaseToggle" checked />
-                    Uppercase letters
-                  </label>
-                </div>
-              </details>
             </aside>
             <div class="experimentMain">
               <div class="phraseRow">
@@ -194,6 +139,16 @@
                 >
               </span>
               <span class="infoInline">
+                <button id="downloadZipBtn" class="btn btnSecondary" type="button">Download ZIP backup</button>
+                <span
+                  class="infoIcon"
+                  tabindex="0"
+                  aria-label="Downloads trials, detailed events, and TLX for this session."
+                  data-tip="Downloads trials, detailed events, and TLX for this session."
+                  >i</span
+                >
+              </span>
+              <span class="infoInline">
                 <button id="sendSheetBtn" class="btn btnSecondary" type="button">Send to Google Sheets</button>
                 <span
                   class="infoIcon"
@@ -224,8 +179,8 @@
                 <span
                   class="infoIcon"
                   tabindex="0"
-                  aria-label="Submitted trials appear here. Practice trials are flagged."
-                  data-tip="Submitted trials appear here. Practice trials are flagged."
+                  aria-label="Submitted trials appear here. Phase is shown."
+                  data-tip="Submitted trials appear here. Phase is shown."
                   >i</span
                 >
               </span>
@@ -237,7 +192,7 @@
                     <th>Trial</th>
                     <th>Layout</th>
                     <th>Phrase</th>
-                    <th>Practice</th>
+                    <th>Phase</th>
                     <th>WPM</th>
                     <th>Edit distance</th>
                     <th>Backspaces</th>
@@ -325,16 +280,6 @@
         </div>
       </div>
     </div>
-    <div id="practiceModal" class="modalOverlay" hidden>
-      <div class="modalCard" role="dialog" aria-modal="true" aria-labelledby="practiceModalTitle">
-        <h3 id="practiceModalTitle" class="modalTitle">Practice complete</h3>
-        <p class="hint">Would you like to run another practice round before main trials?</p>
-        <div class="modalActions">
-          <button id="practiceRepeatBtn" class="btn btnPrimary" type="button">Another practice round</button>
-          <button id="practiceContinueBtn" class="btn btnSecondary" type="button">Continue to main trials</button>
-        </div>
-      </div>
-    </div>
     <div id="tlxModal" class="modalOverlay" hidden>
       <div class="modalCard tlxModalCard" role="dialog" aria-modal="true" aria-labelledby="tlxModalTitle">
         <h3 id="tlxModalTitle" class="modalTitle">Form</h3>
@@ -409,6 +354,18 @@
         <div class="modalActions">
           <button id="tlxSaveBtn" class="btn btnPrimary" type="button">Continue</button>
           <button id="tlxClearBtn" class="btn btnSecondary" type="button">Reset</button>
+        </div>
+      </div>
+    </div>
+    <div id="zipModal" class="modalOverlay" hidden>
+      <div class="modalCard" role="dialog" aria-modal="true" aria-labelledby="zipModalTitle">
+        <h3 id="zipModalTitle" class="modalTitle">Download backup</h3>
+        <p class="hint">
+          This will download a ZIP with the trials, detailed key events, and TLX data from your session.
+        </p>
+        <div id="zipModalStatus" class="hint" role="status" aria-live="polite"></div>
+        <div class="modalActions">
+          <button id="zipModalDownloadBtn" class="btn btnPrimary" type="button">Download ZIP</button>
         </div>
       </div>
     </div>
