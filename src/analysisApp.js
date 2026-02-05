@@ -1325,6 +1325,13 @@
     Plotly.react(el, traces, plotlyLayoutBase("Paired lines"));
   }
 
+  function setChartVisibility(chartId, visible) {
+    const el = document.getElementById(chartId);
+    if (!el) return;
+    const card = el.closest(".chartCard") || el;
+    card.style.display = visible ? "" : "none";
+  }
+
   function plotPosthocDifferences(metricKey, layouts, matrix, posthocRows) {
     const el = document.getElementById(`chart-${metricKey}-posthoc`);
     if (!el) return;
@@ -1719,8 +1726,11 @@
 
     if (canPlot) {
       const colorMap = createLayoutColorMap(analysis.layouts);
+      setChartVisibility("chart-wpm-mean", useParametric);
       plotDistribution("wpm", analysis.layouts, analysis.perLayoutParticipantMeans, colorMap);
-      plotMeanCi("wpm", analysis.layouts, analysis.perLayoutParticipantMeans, colorMap);
+      if (useParametric) {
+        plotMeanCi("wpm", analysis.layouts, analysis.perLayoutParticipantMeans, colorMap);
+      }
       plotPaired("wpm", analysis.layouts, wpmMatrix, wpmParticipants, colorMap);
       plotPosthocDifferences("wpm", analysis.layouts, wpmMatrix, posthocRows);
     }
@@ -1946,8 +1956,11 @@
     if (statusEl) canPlot = ensureLibraries(statusEl);
     if (canPlot) {
       const colorMap = createLayoutColorMap(layouts);
+      setChartVisibility("chart-backspaceCount-mean", useParametric);
       plotDistribution("backspaceCount", layouts, analysis.perLayoutParticipantMeans, colorMap);
-      plotMeanCi("backspaceCount", layouts, analysis.perLayoutParticipantMeans, colorMap);
+      if (useParametric) {
+        plotMeanCi("backspaceCount", layouts, analysis.perLayoutParticipantMeans, colorMap);
+      }
       plotPaired("backspaceCount", layouts, backspaceMatrix, backspaceParticipants, colorMap);
     }
   }
@@ -2172,8 +2185,11 @@
     if (statusEl) canPlot = ensureLibraries(statusEl);
     if (canPlot) {
       const colorMap = createLayoutColorMap(layouts);
+      setChartVisibility("chart-errorRate-mean", useParametric);
       plotDistribution("errorRate", layouts, analysis.perLayoutParticipantMeans, colorMap);
-      plotMeanCi("errorRate", layouts, analysis.perLayoutParticipantMeans, colorMap);
+      if (useParametric) {
+        plotMeanCi("errorRate", layouts, analysis.perLayoutParticipantMeans, colorMap);
+      }
       plotPaired("errorRate", layouts, errorRateMatrix, errorRateParticipants, colorMap);
     }
   }
@@ -2489,8 +2505,11 @@
     if (statusEl) canPlot = ensureLibraries(statusEl);
     if (canPlot) {
       const colorMap = createLayoutColorMap(layouts);
+      setChartVisibility("chart-tlxOverall-mean", useParametric);
       plotDistribution("tlxOverall", layouts, analysis.tlxPerLayoutMeans, colorMap);
-      plotMeanCi("tlxOverall", layouts, analysis.tlxPerLayoutMeans, colorMap);
+      if (useParametric) {
+        plotMeanCi("tlxOverall", layouts, analysis.tlxPerLayoutMeans, colorMap);
+      }
       plotPaired("tlxOverall", layouts, tlxMatrix, tlxParticipants, colorMap);
     }
 
