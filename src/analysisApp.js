@@ -2,7 +2,6 @@
   "use strict";
 
   const STORAGE_PREFIX = "KbdStudy.analysisPage.";
-  const ANALYSIS_STORAGE_KEY = `${STORAGE_PREFIX}analysis.v1`;
   const PARTICIPANT_FILTER_KEY = `${STORAGE_PREFIX}participantFilter.v1`;
   const APPS_SCRIPT_WEB_APP_URL =
     "https://script.google.com/macros/s/AKfycbytD-NEdHkHJGAHObI12TCWxzEga5m_PX4A1vmbAJrdwQXSxEQZ8SMTZvbzJ5wq7LbNeA/exec";
@@ -14,9 +13,6 @@
     { key: "editDistance", label: "Edit distance", decimals: 2 },
     { key: "elapsedSeconds", label: "Elapsed (s)", decimals: 2 },
     { key: "backspaceCount", label: "Backspace count", decimals: 2 },
-    { key: "keypressCount", label: "Keypress count", decimals: 2 },
-    { key: "kspc", label: "KSPC", decimals: 3 },
-    { key: "efficiency", label: "Efficiency", decimals: 2 },
   ];
 
   const TLX_FIELDS = [
@@ -26,6 +22,13 @@
     { key: "tlxPerformance", label: "Performance", decimals: 1 },
     { key: "tlxEffort", label: "Effort", decimals: 1 },
     { key: "tlxFrustration", label: "Frustration", decimals: 1 },
+  ];
+  const TLX_REQUIRED_HEADERS = [
+    "sessionId",
+    "participantId",
+    "layoutName",
+    "layoutIndex",
+    ...TLX_FIELDS.map((field) => field.key),
   ];
 
   const REQUIRED_HEADERS = [
@@ -56,6 +59,7 @@
   const CI_Z = 1.96;
 
   let lastRows = null;
+  let lastTlxRows = [];
   let lastThresholds = null;
   let lastParticipantIds = [];
   let lastParticipantSelection = new Set();
@@ -72,15 +76,6 @@
     } catch {
       return fallback;
     }
-  }
-
-  function loadAnalysisState() {
-    const raw = localStorage.getItem(ANALYSIS_STORAGE_KEY);
-    return raw ? safeParse(raw, null) : null;
-  }
-
-  function saveAnalysisState(state) {
-    localStorage.setItem(ANALYSIS_STORAGE_KEY, JSON.stringify(state));
   }
 
   function loadParticipantFilter() {
@@ -145,6 +140,11 @@
     return REQUIRED_HEADERS.filter((h) => !normalized.includes(h));
   }
 
+  function validateTlxHeaders(headers) {
+    const normalized = headers.map((h) => h.trim());
+    return TLX_REQUIRED_HEADERS.filter((h) => !normalized.includes(h));
+  }
+
   async function fetchParticipantSheets() {
     const url = `${APPS_SCRIPT_WEB_APP_URL}?action=listSheets`;
     const resp = await fetch(url, { cache: "no-store" });
@@ -165,6 +165,27 @@
       throw new Error(`CSV fetch failed for ${sheetName} (HTTP ${resp.status})`);
     }
     return resp.text();
+  }
+
+  async function fetchTlxRows() {
+    try {
+      const tlxCsv = await fetchSheetCsv("TLX");
+      const parsed = parseCsv(tlxCsv);
+      if (!parsed.rows.length) return { rows: [], warnings: [] };
+      const missingHeaders = validateTlxHeaders(parsed.headers);
+      if (missingHeaders.length) {
+        return {
+          rows: [],
+          warnings: [`Sheet TLX missing columns: ${missingHeaders.join(", ")}`],
+        };
+      }
+      return { rows: parsed.rows, warnings: [] };
+    } catch (err) {
+      return {
+        rows: [],
+        warnings: [`Failed to fetch TLX sheet: ${err instanceof Error ? err.message : err}`],
+      };
+    }
   }
 
   async function fetchAllParticipantRows(statusEl) {
@@ -199,7 +220,20 @@
       rows.push(...parsed.rows);
     });
 
-    return { rows, warnings };
+    statusEl.textContent = "Fetching TLX sheet...";
+    const tlxResult = await fetchTlxRows();
+    if (tlxResult.warnings.length) warnings.push(...tlxResult.warnings);
+
+    return { rows, warnings, tlxRows: tlxResult.rows };
+  }
+
+  function getAnalysisForDownload(thresholds, statusEl) {
+    if (!lastRows || !lastRows.length) {
+      if (statusEl) statusEl.textContent = "No data loaded yet. Click Refresh analysis.";
+      return null;
+    }
+    const normalizedTlxRows = normalizeTlxRows(lastTlxRows || [], lastRows);
+    return computeAnalysisData(lastRows, thresholds, normalizedTlxRows);
   }
 
   function toNumber(value, fallback = null) {
@@ -350,6 +384,26 @@
     });
   }
 
+  function normalizeTlxRows(tlxRows, rows) {
+    if (!Array.isArray(tlxRows) || !tlxRows.length) return [];
+    const sessionToParticipant = new Map();
+    (rows || []).forEach((row) => {
+      const sid = String(row.sessionId || "").trim();
+      const pid = String(row.participantId || "").trim();
+      if (sid && pid && !sessionToParticipant.has(sid)) sessionToParticipant.set(sid, pid);
+    });
+
+    return tlxRows.map((row) => {
+      const sid = String(row.sessionId || "").trim();
+      const pid = String(row.participantId || "").trim();
+      const mapped = sessionToParticipant.get(sid);
+      if (mapped && mapped !== pid) {
+        return { ...row, participantId: mapped };
+      }
+      return row;
+    });
+  }
+
   function updateParticipantSummary(selectedSet, totalCount) {
     const summaryEl = document.getElementById("analysisParticipantSummary");
     if (!summaryEl) return;
@@ -364,8 +418,10 @@
   function recomputeFromFilters(statusEl) {
     if (!lastRows || !lastThresholds) return;
     const filteredRows = applyParticipantFilter(lastRows, lastParticipantSelection);
-    const analysis = computeAnalysisData(filteredRows, lastThresholds);
-    renderDashboard(analysis, lastThresholds, statusEl || null);
+    const normalizedTlxRows = normalizeTlxRows(lastTlxRows || [], lastRows);
+    const filteredTlxRows = applyParticipantFilter(normalizedTlxRows, lastParticipantSelection);
+    const analysis = computeAnalysisData(filteredRows, lastThresholds, filteredTlxRows);
+    renderAnalysisFlow(analysis, lastThresholds, statusEl || null);
     if (statusEl) {
       statusEl.textContent = filteredRows.length ? "Analysis updated." : "No participants selected.";
     }
@@ -430,45 +486,6 @@
     });
   }
 
-  function pearsonCorrelation(xs, ys) {
-    const pairs = xs
-      .map((x, i) => ({ x, y: ys[i] }))
-      .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
-    if (pairs.length < 2) return null;
-    const xMean = mean(pairs.map((p) => p.x));
-    const yMean = mean(pairs.map((p) => p.y));
-    let num = 0;
-    let denX = 0;
-    let denY = 0;
-    pairs.forEach((p) => {
-      const dx = p.x - xMean;
-      const dy = p.y - yMean;
-      num += dx * dy;
-      denX += dx * dx;
-      denY += dy * dy;
-    });
-    if (denX <= 0 || denY <= 0) return null;
-    return num / Math.sqrt(denX * denY);
-  }
-
-  function linearRegressionSlope(xs, ys) {
-    const pairs = xs
-      .map((x, i) => ({ x, y: ys[i] }))
-      .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
-    if (pairs.length < 2) return null;
-    const xMean = mean(pairs.map((p) => p.x));
-    const yMean = mean(pairs.map((p) => p.y));
-    let num = 0;
-    let den = 0;
-    pairs.forEach((p) => {
-      const dx = p.x - xMean;
-      num += dx * (p.y - yMean);
-      den += dx * dx;
-    });
-    if (den <= 0) return null;
-    return num / den;
-  }
-
   function formatNumber(value, decimals) {
     if (!Number.isFinite(value)) return "n/a";
     return value.toFixed(decimals);
@@ -487,16 +504,218 @@
     return map;
   }
 
-  function computeSkewKurtosis(values) {
-    if (values.length < 3) return { skew: null, kurtosis: null };
-    const m = mean(values);
-    const m2 = mean(values.map((v) => (v - m) ** 2));
-    const m3 = mean(values.map((v) => (v - m) ** 3));
-    const m4 = mean(values.map((v) => (v - m) ** 4));
-    if (!m2 || m2 === 0) return { skew: 0, kurtosis: 0 };
-    const skew = m3 / Math.pow(m2, 1.5);
-    const kurtosis = m4 / (m2 * m2) - 3;
-    return { skew, kurtosis };
+  // ── Shapiro-Wilk test (Royston 1995 algorithm AS R94) ───────────────────────
+  // Returns { W, p } or null if the input is unsuitable.
+  // Valid for 3 <= n <= 5000. Uses jStat.normal.inv for quantiles.
+  function shapiroWilk(x) {
+    if (!window.jStat) return null;
+    const sorted = x.slice().sort((a, b) => a - b);
+    const n = sorted.length;
+    if (n < 3) return null;
+
+    // Check for zero variance
+    const xMean = mean(sorted);
+    const s2 = sorted.reduce((acc, v) => acc + (v - xMean) ** 2, 0);
+    if (s2 === 0) return { W: 1, p: 1 };
+
+    // Compute Shapiro-Wilk coefficients 'a' via Blom-type normal order statistics
+    const m = new Array(n);
+    for (let i = 0; i < n; i++) {
+      m[i] = jStat.normal.inv((i + 1 - 0.375) / (n + 0.25), 0, 1);
+    }
+    const mSum2 = m.reduce((acc, v) => acc + v * v, 0);
+
+    // Compute weights 'a'
+    const a = new Array(n).fill(0);
+    if (n === 3) {
+      const sqrt2 = Math.SQRT2;
+      a[0] = m[n - 1] / Math.sqrt(2 * mSum2);
+      a[n - 1] = -a[0];
+    } else {
+      // Use Royston's polynomial approximation for a[n-1] and a[n-2]
+      const u = 1 / Math.sqrt(n);
+      // Coefficients for the largest weight a_n (from Royston 1995)
+      const an = m[n - 1] / Math.sqrt(mSum2);
+      const an1 = n <= 5
+        ? (m[n - 2] / Math.sqrt(mSum2))
+        : m[n - 2] / Math.sqrt(mSum2);
+
+      // Polynomial approximations for a[n-1]
+      const p1 = [-2.706056, 4.434685, -2.07119, -0.147981, 0.221157, an];
+      const evalPoly = (coeffs, x) => {
+        let result = coeffs[0];
+        for (let i = 1; i < coeffs.length; i++) result = result * x + coeffs[i];
+        return result;
+      };
+
+      // For small n (<=5), use simple normalized weights
+      if (n <= 5) {
+        for (let i = 0; i < n; i++) a[i] = m[i] / Math.sqrt(mSum2);
+      } else {
+        // Compute a[n-1] via polynomial in u
+        a[n - 1] = -2.706056 * Math.pow(u, 5) + 4.434685 * Math.pow(u, 4)
+          - 2.07119 * Math.pow(u, 3) - 0.147981 * Math.pow(u, 2)
+          + 0.221157 * u + an;
+        a[0] = -a[n - 1];
+
+        // Compute a[n-2] via polynomial in u
+        a[n - 2] = -3.582633 * Math.pow(u, 5) + 5.682633 * Math.pow(u, 4)
+          - 1.752461 * Math.pow(u, 3) - 0.293762 * Math.pow(u, 2)
+          + 0.042981 * u + an1;
+        a[1] = -a[n - 2];
+
+        // Fill middle weights using normalized m values, adjusted so sum(a^2) = 1
+        const phi = (s2 - 2 * sorted[n - 1] ** 2 * a[n - 1] ** 2 - 2 * sorted[n - 2] ** 2 * a[n - 2] ** 2);
+        const endSumA2 = a[0] ** 2 + a[1] ** 2 + a[n - 2] ** 2 + a[n - 1] ** 2;
+        const midMSum2 = m.slice(2, n - 2).reduce((acc, v) => acc + v * v, 0);
+        if (midMSum2 > 0) {
+          const scale = Math.sqrt((1 - endSumA2) / midMSum2);
+          for (let i = 2; i < n - 2; i++) a[i] = m[i] * scale;
+        }
+      }
+    }
+
+    // Compute W statistic
+    let numerator = 0;
+    for (let i = 0; i < n; i++) numerator += a[i] * sorted[i];
+    numerator = numerator * numerator;
+    const W = numerator / s2;
+
+    // Compute p-value using Royston's normalizing transformation
+    let z, mu, sigma;
+    if (n <= 11) {
+      // Small sample: use log-transform
+      const gamma = 0.459 * n - 2.273;
+      const logW = -Math.log(1 - W);
+      mu = -0.0006714 * n * n * n + 0.025054 * n * n - 0.39978 * n + 0.5440;
+      sigma = Math.exp(-0.0020322 * n * n * n + 0.062767 * n * n - 0.77857 * n + 1.3822);
+      z = (logW - mu) / sigma;
+    } else {
+      // Larger sample: use log(1 - W) transform
+      const logN = Math.log(n);
+      mu = 0.0038915 * logN * logN * logN - 0.083751 * logN * logN - 0.31082 * logN - 1.5861;
+      sigma = Math.exp(0.0030302 * logN * logN * logN - 0.082676 * logN * logN - 0.4803);
+      z = (Math.log(1 - W) - mu) / sigma;
+    }
+
+    const p = 1 - jStat.normal.cdf(z, 0, 1);
+    return { W: Math.min(W, 1), p: Math.max(0, Math.min(1, p)) };
+  }
+
+  // ── Mauchly's sphericity test ──────────────────────────────────────────────
+  // Input: n x k matrix (participants x conditions).
+  // Returns { W, chi2, df, p, epsilon } where epsilon = Greenhouse-Geisser.
+  function mauchlyTest(matrix) {
+    if (!window.jStat) return null;
+    const n = matrix.length;
+    if (!n) return null;
+    const k = matrix[0].length;
+    if (k < 3) return null; // sphericity is trivially satisfied with k=2
+
+    // Compute k-1 orthogonal difference variables (simple consecutive differences)
+    const p = k - 1; // number of difference variables
+    const diffs = []; // n x p matrix
+    for (let i = 0; i < n; i++) {
+      const row = [];
+      for (let j = 0; j < p; j++) {
+        row.push(matrix[i][j] - matrix[i][j + 1]);
+      }
+      diffs.push(row);
+    }
+
+    // Compute covariance matrix S of the difference variables (p x p)
+    const diffMeans = new Array(p).fill(0);
+    for (let i = 0; i < n; i++) {
+      for (let j = 0; j < p; j++) diffMeans[j] += diffs[i][j];
+    }
+    for (let j = 0; j < p; j++) diffMeans[j] /= n;
+
+    const S = Array.from({ length: p }, () => new Array(p).fill(0));
+    for (let i = 0; i < n; i++) {
+      for (let r = 0; r < p; r++) {
+        for (let c = 0; c < p; c++) {
+          S[r][c] += (diffs[i][r] - diffMeans[r]) * (diffs[i][c] - diffMeans[c]);
+        }
+      }
+    }
+    for (let r = 0; r < p; r++) {
+      for (let c = 0; c < p; c++) S[r][c] /= (n - 1);
+    }
+
+    // Determinant of S (for p=2, which is our k=3 case)
+    let detS;
+    if (p === 1) {
+      detS = S[0][0];
+    } else if (p === 2) {
+      detS = S[0][0] * S[1][1] - S[0][1] * S[1][0];
+    } else {
+      // General LU-based determinant for larger p
+      detS = matDeterminant(S, p);
+    }
+
+    // Trace of S
+    let traceS = 0;
+    for (let j = 0; j < p; j++) traceS += S[j][j];
+
+    // Mauchly's W
+    const W = detS / Math.pow(traceS / p, p);
+
+    // Chi-squared approximation (Box 1954)
+    const f = (2 * p * p + p + 2) / (6 * p * (n - 1));
+    const df = (p * (p + 1)) / 2 - 1;
+    const chi2 = -(n - 1 - f) * Math.log(Math.max(W, 1e-15));
+    const pValue = 1 - jStat.chisquare.cdf(chi2, df);
+
+    // Greenhouse-Geisser epsilon
+    const epsilon = computeGreenhouseGeisser(S, p);
+
+    return {
+      W: Math.max(0, Math.min(1, W)),
+      chi2,
+      df,
+      p: Math.max(0, Math.min(1, pValue)),
+      epsilon,
+    };
+  }
+
+  // Determinant via LU decomposition (for general p x p matrix)
+  function matDeterminant(M, p) {
+    const A = M.map((row) => row.slice());
+    let det = 1;
+    for (let i = 0; i < p; i++) {
+      let maxRow = i;
+      for (let r = i + 1; r < p; r++) {
+        if (Math.abs(A[r][i]) > Math.abs(A[maxRow][i])) maxRow = r;
+      }
+      if (maxRow !== i) {
+        [A[i], A[maxRow]] = [A[maxRow], A[i]];
+        det *= -1;
+      }
+      if (Math.abs(A[i][i]) < 1e-15) return 0;
+      det *= A[i][i];
+      for (let r = i + 1; r < p; r++) {
+        const factor = A[r][i] / A[i][i];
+        for (let c = i; c < p; c++) A[r][c] -= factor * A[i][c];
+      }
+    }
+    return det;
+  }
+
+  // Greenhouse-Geisser epsilon from the covariance matrix of difference scores
+  function computeGreenhouseGeisser(S, p) {
+    // Epsilon = (trace(S))^2 / (p * trace(S * S))
+    let traceS = 0;
+    let traceSS = 0;
+    for (let i = 0; i < p; i++) {
+      traceS += S[i][i];
+      for (let j = 0; j < p; j++) {
+        traceSS += S[i][j] * S[j][i];
+      }
+    }
+    if (traceSS === 0 || p === 0) return 1;
+    const epsilon = (traceS * traceS) / (p * traceSS);
+    // Epsilon is bounded [1/(k-1), 1] but clamp to be safe
+    return Math.max(1 / p, Math.min(1, epsilon));
   }
 
   function mergeWarnings(...lists) {
@@ -590,33 +809,6 @@
     const eta = ssConditions + ssError > 0 ? ssConditions / (ssConditions + ssError) : null;
 
     return { F, p, df1: dfConditions, df2: dfError, eta, n, k };
-  }
-
-  function oneWayAnova(groups) {
-    if (!window.jStat) return null;
-    const cleanGroups = groups.filter((g) => Array.isArray(g.values) && g.values.length > 0);
-    if (cleanGroups.length < 2) return null;
-    const allValues = cleanGroups.flatMap((g) => g.values);
-    if (allValues.length < 3) return null;
-    const grand = mean(allValues);
-    let ssBetween = 0;
-    let ssWithin = 0;
-    cleanGroups.forEach((g) => {
-      const m = mean(g.values);
-      ssBetween += g.values.length * (m - grand) ** 2;
-      g.values.forEach((v) => {
-        ssWithin += (v - m) ** 2;
-      });
-    });
-    const df1 = cleanGroups.length - 1;
-    const df2 = allValues.length - cleanGroups.length;
-    if (df2 <= 0) return null;
-    const msBetween = ssBetween / df1;
-    const msWithin = ssWithin / df2;
-    const F = msWithin > 0 ? msBetween / msWithin : null;
-    const p = F != null ? 1 - jStat.centralF.cdf(F, df1, df2) : null;
-    const eta = ssBetween + ssWithin > 0 ? ssBetween / (ssBetween + ssWithin) : null;
-    return { F, p, df1, df2, eta, n: allValues.length, k: cleanGroups.length };
   }
 
   function rankWithTies(values) {
@@ -753,9 +945,6 @@
         editDistance: [],
         elapsedSeconds: [],
         backspaceCount: [],
-        keypressCount: [],
-        kspc: [],
-        efficiency: [],
       });
     });
 
@@ -782,7 +971,6 @@
         meanEd: mean(bucket.editDistance) ?? 0,
         meanElapsed: mean(bucket.elapsedSeconds) ?? 0,
         meanBackspace: mean(bucket.backspaceCount) ?? 0,
-        meanKeypress: mean(bucket.keypressCount) ?? 0,
       });
     }
     return layoutRows;
@@ -800,9 +988,6 @@
           editDistance: [],
           elapsedSeconds: [],
           backspaceCount: [],
-          keypressCount: [],
-          kspc: [],
-          efficiency: [],
         });
       }
       const metricBucket = layoutMap.get(trial.layoutId);
@@ -850,493 +1035,8 @@
     return out;
   }
 
-  function computeLearningCurves(trials, layouts) {
-    const layoutMap = new Map();
-    layouts.forEach((layoutId) => layoutMap.set(layoutId, new Map()));
-    trials.forEach((trial) => {
-      const idx = Number.isFinite(trial.trialIndex) ? trial.trialIndex : null;
-      if (!idx || idx <= 0) return;
-      const perLayout = layoutMap.get(trial.layoutId);
-      if (!perLayout) return;
-      if (!perLayout.has(idx)) {
-        const entry = {};
-        METRICS.forEach((metric) => {
-          entry[metric.key] = [];
-        });
-        perLayout.set(idx, entry);
-      }
-      const entry = perLayout.get(idx);
-      METRICS.forEach((metric) => {
-        const value = trial.metrics[metric.key];
-        if (Number.isFinite(value)) entry[metric.key].push(value);
-      });
-    });
-    return layoutMap;
-  }
 
-  function computeDataQuality(rawRows, analysisRows, thresholds, layouts) {
-    const missing = {
-      participantId: 0,
-      layoutId: 0,
-      wpm: 0,
-      editDistance: 0,
-      charCount: 0,
-      elapsedMs: 0,
-    };
-    const duplicateKeys = new Set();
-    let duplicateTrials = 0;
-
-    rawRows.forEach((row) => {
-      if (!row.participantId) missing.participantId += 1;
-      if (!row.layoutId) missing.layoutId += 1;
-      if (!Number.isFinite(toNumber(row.wpm, null))) missing.wpm += 1;
-      if (!Number.isFinite(toNumber(row.editDistance, null))) missing.editDistance += 1;
-      if (!Number.isFinite(toNumber(row.charCount, null))) missing.charCount += 1;
-      if (!Number.isFinite(toNumber(row.elapsedMs, null))) missing.elapsedMs += 1;
-
-      const key = `${row.sessionId ?? ""}|${row.trialId ?? ""}`;
-      if (key !== "|") {
-        if (duplicateKeys.has(key)) duplicateTrials += 1;
-        else duplicateKeys.add(key);
-      }
-    });
-
-    let shortTrials = 0;
-    let highError = 0;
-    analysisRows.forEach((row) => {
-      const elapsedMs = toNumber(row.elapsedMs, null);
-      if (elapsedMs != null && elapsedMs > 0 && elapsedMs < thresholds.minElapsedMs) shortTrials += 1;
-      const editDistance = toNumber(row.editDistance, null);
-      const charCount = toNumber(row.charCount, null);
-      const errorRate = computeErrorRate(editDistance, charCount);
-      if (errorRate != null && errorRate > thresholds.maxErrorRate) highError += 1;
-    });
-
-    const layoutSet = new Set(layouts);
-    const participantLayouts = new Map();
-    analysisRows.forEach((row) => {
-      const pid = row.participantId || "unknown";
-      if (!participantLayouts.has(pid)) participantLayouts.set(pid, new Set());
-      participantLayouts.get(pid).add(row.layoutId || "unknown");
-    });
-    let incompleteParticipants = 0;
-    participantLayouts.forEach((set) => {
-      if (set.size < layoutSet.size) incompleteParticipants += 1;
-    });
-
-    const practiceRows = rawRows.filter((r) => String(r.isPractice).toLowerCase() === "true").length;
-    const learningRows = rawRows.filter((r) => String(r.trialType).toLowerCase() === "learning").length;
-
-    return {
-      totalRows: rawRows.length,
-      usedRows: analysisRows.length,
-      practiceRows,
-      excludedPractice: thresholds.excludePractice ? practiceRows : 0,
-      learningRows,
-      excludedLearning: learningRows,
-      missing,
-      duplicateTrials,
-      shortTrials,
-      highError,
-      participantCount: participantLayouts.size,
-      layoutCount: layoutSet.size,
-      incompleteParticipants,
-    };
-  }
-
-  function selectPosthoc(stats) {
-    if (!stats) return { list: [], label: "n/a" };
-    const preferParam = stats.recommendation.startsWith("Parametric");
-    const paramList = stats.posthocParam || [];
-    const nonParamList = stats.posthocNonParam || [];
-    if (preferParam && paramList.length) return { list: paramList, label: "paired t (Holm)" };
-    if (!preferParam && nonParamList.length) return { list: nonParamList, label: "Wilcoxon (Holm)" };
-    if (paramList.length) return { list: paramList, label: "paired t (Holm)" };
-    if (nonParamList.length) return { list: nonParamList, label: "Wilcoxon (Holm)" };
-    return { list: [], label: "n/a" };
-  }
-
-  function findPairResult(list, a, b) {
-    if (!Array.isArray(list)) return null;
-    return list.find((row) => row.pair === `${a} vs ${b}` || row.pair === `${b} vs ${a}`) || null;
-  }
-
-  function formatAnovaSummary(stats, preferParametric) {
-    if (!stats) return "Not enough data";
-    if (preferParametric && stats.anova) {
-      return `RM-ANOVA F(${stats.anova.df1}, ${stats.anova.df2}) = ${formatNumber(
-        stats.anova.F,
-        3
-      )}, p = ${formatNumber(stats.anova.p, 4)}, eta²p = ${formatNumber(stats.anova.eta, 3)}`;
-    }
-    if (stats.friedman) {
-      return `Friedman χ²(${stats.friedman.df}) = ${formatNumber(stats.friedman.chi2, 3)}, p = ${formatNumber(
-        stats.friedman.p,
-        4
-      )}, Kendall W = ${formatNumber(stats.friedman.w, 3)}`;
-    }
-    return "Not enough data";
-  }
-
-  function computePrimaryOutcomes(analysis) {
-    const baseline = analysis.layouts.includes("qwerty") ? "qwerty" : analysis.layouts[0];
-    const wpmStats = computeMetricStats(
-      "wpm",
-      analysis.participantMeans,
-      analysis.layouts,
-      analysis.participants
-    );
-    const errStats = computeMetricStats(
-      "errorRate",
-      analysis.participantMeans,
-      analysis.layouts,
-      analysis.participants
-    );
-    const wpmPosthoc = selectPosthoc(wpmStats);
-    const errPosthoc = selectPosthoc(errStats);
-
-    const wpmLayoutStats = analysis.layouts.map((layoutId) => {
-      const values = analysis.perLayoutParticipantMeans.get(layoutId)?.wpm ?? [];
-      const { mean, ci, n } = meanAndCi(values);
-      return { layoutId, mean, ci, n };
-    });
-    const errLayoutStats = analysis.layouts.map((layoutId) => {
-      const values = analysis.perLayoutParticipantMeans.get(layoutId)?.errorRate ?? [];
-      const { mean, ci, n } = meanAndCi(values);
-      return { layoutId, mean, ci, n };
-    });
-
-    const baselineWpm = wpmLayoutStats.find((r) => r.layoutId === baseline)?.mean ?? null;
-    const baselineErr = errLayoutStats.find((r) => r.layoutId === baseline)?.mean ?? null;
-
-    const wpmBaselineComparisons = wpmLayoutStats.map((row) => {
-      const pair = row.layoutId === baseline ? null : findPairResult(wpmPosthoc.list, baseline, row.layoutId);
-      return {
-        layoutId: row.layoutId,
-        mean: row.mean,
-        ci: row.ci,
-        delta: baselineWpm != null && row.mean != null ? row.mean - baselineWpm : null,
-        pAdj: pair ? pair.pAdj : null,
-        effect: pair ? pair.effect : null,
-      };
-    });
-    const errBaselineComparisons = errLayoutStats.map((row) => {
-      const pair = row.layoutId === baseline ? null : findPairResult(errPosthoc.list, baseline, row.layoutId);
-      return {
-        layoutId: row.layoutId,
-        mean: row.mean,
-        ci: row.ci,
-        delta: baselineErr != null && row.mean != null ? row.mean - baselineErr : null,
-        pAdj: pair ? pair.pAdj : null,
-        effect: pair ? pair.effect : null,
-      };
-    });
-
-    const bestWpm = wpmBaselineComparisons.reduce((best, row) => {
-      if (row.mean == null) return best;
-      if (!best || row.mean > best.mean) return row;
-      return best;
-    }, null);
-    const bestErr = errBaselineComparisons.reduce((best, row) => {
-      if (row.mean == null) return best;
-      if (!best || row.mean < best.mean) return row;
-      return best;
-    }, null);
-
-    const wpmPreferParam = wpmStats.recommendation.startsWith("Parametric");
-    const errPreferParam = errStats.recommendation.startsWith("Parametric");
-
-    return {
-      baseline,
-      bestWpm,
-      bestErr,
-      wpm: {
-        stats: wpmStats,
-        testSummary: formatAnovaSummary(wpmStats, wpmPreferParam),
-        posthocLabel: wpmPosthoc.label,
-        layoutStats: wpmBaselineComparisons,
-      },
-      errorRate: {
-        stats: errStats,
-        testSummary: formatAnovaSummary(errStats, errPreferParam),
-        posthocLabel: errPosthoc.label,
-        layoutStats: errBaselineComparisons,
-      },
-    };
-  }
-
-  function computeLearningSummary(analysis) {
-    return analysis.layouts.map((layoutId) => {
-      const curve = analysis.learningCurves.get(layoutId) || new Map();
-      const points = Array.from(curve.entries())
-        .map(([idx, metrics]) => ({
-          idx: Number(idx),
-          wpm: mean(metrics.wpm) ?? null,
-          errorRate: mean(metrics.errorRate) ?? null,
-        }))
-        .filter((p) => Number.isFinite(p.idx))
-        .sort((a, b) => a.idx - b.idx);
-
-      const early = points.slice(0, 2);
-      const late = points.slice(-2);
-      const earlyWpm = mean(early.map((p) => p.wpm).filter(Number.isFinite));
-      const lateWpm = mean(late.map((p) => p.wpm).filter(Number.isFinite));
-      const earlyErr = mean(early.map((p) => p.errorRate).filter(Number.isFinite));
-      const lateErr = mean(late.map((p) => p.errorRate).filter(Number.isFinite));
-      const slopeWpm = linearRegressionSlope(
-        points.map((p) => p.idx),
-        points.map((p) => p.wpm)
-      );
-      const slopeErr = linearRegressionSlope(
-        points.map((p) => p.idx),
-        points.map((p) => p.errorRate)
-      );
-
-      return {
-        layoutId,
-        earlyWpm,
-        lateWpm,
-        deltaWpm: earlyWpm != null && lateWpm != null ? lateWpm - earlyWpm : null,
-        slopeWpm,
-        earlyErr,
-        lateErr,
-        deltaErr: earlyErr != null && lateErr != null ? lateErr - earlyErr : null,
-        slopeErr,
-      };
-    });
-  }
-
-  function computeOrderEffects(analysis) {
-    const positionCount = analysis.layouts.length;
-    const positions = Array.from({ length: positionCount }, (_, i) => i + 1);
-    const perParticipant = new Map();
-
-    analysis.trials.forEach((trial) => {
-      if (!Number.isFinite(trial.layoutIndex)) return;
-      if (!perParticipant.has(trial.participantId)) perParticipant.set(trial.participantId, new Map());
-      const pos = trial.layoutIndex;
-      if (!perParticipant.get(trial.participantId).has(pos)) {
-        perParticipant.get(trial.participantId).set(pos, { wpm: [], errorRate: [] });
-      }
-      const bucket = perParticipant.get(trial.participantId).get(pos);
-      if (Number.isFinite(trial.metrics.wpm)) bucket.wpm.push(trial.metrics.wpm);
-      if (Number.isFinite(trial.metrics.errorRate)) bucket.errorRate.push(trial.metrics.errorRate);
-    });
-
-    const matrixWpm = [];
-    const matrixErr = [];
-    const perPositionValues = positions.map(() => ({ wpm: [], errorRate: [] }));
-    perParticipant.forEach((posMap) => {
-      const rowWpm = [];
-      const rowErr = [];
-      let ok = true;
-      positions.forEach((pos, idx) => {
-        const metrics = posMap.get(pos);
-        const wpmMean = metrics ? mean(metrics.wpm) : null;
-        const errMean = metrics ? mean(metrics.errorRate) : null;
-        if (!Number.isFinite(wpmMean) || !Number.isFinite(errMean)) ok = false;
-        rowWpm.push(wpmMean);
-        rowErr.push(errMean);
-        if (Number.isFinite(wpmMean)) perPositionValues[idx].wpm.push(wpmMean);
-        if (Number.isFinite(errMean)) perPositionValues[idx].errorRate.push(errMean);
-      });
-      if (ok) {
-        matrixWpm.push(rowWpm);
-        matrixErr.push(rowErr);
-      }
-    });
-
-    const positionSummary = positions.map((pos, idx) => {
-      const wpmStats = meanAndCi(perPositionValues[idx].wpm);
-      const errStats = meanAndCi(perPositionValues[idx].errorRate);
-      return {
-        position: pos,
-        wpm: wpmStats.mean,
-        wpmCi: wpmStats.ci,
-        wpmN: wpmStats.n,
-        err: errStats.mean,
-        errCi: errStats.ci,
-        errN: errStats.n,
-      };
-    });
-
-    const orderWpmStats = rmAnova(matrixWpm);
-    const orderErrStats = rmAnova(matrixErr);
-    const orderWpmFriedman = friedmanTest(matrixWpm);
-    const orderErrFriedman = friedmanTest(matrixErr);
-
-    const carryoverGroups = new Map();
-    analysis.trials.forEach((trial) => {
-      if (!trial.prevLayout) return;
-      if (!carryoverGroups.has(trial.prevLayout)) {
-        carryoverGroups.set(trial.prevLayout, []);
-      }
-      carryoverGroups.get(trial.prevLayout).push(trial.metrics);
-    });
-
-    const carryoverSummary = Array.from(carryoverGroups.entries()).map(([prevLayout, metrics]) => {
-      const wpmValues = metrics.map((m) => m.wpm).filter(Number.isFinite);
-      const errValues = metrics.map((m) => m.errorRate).filter(Number.isFinite);
-      const wpmStats = meanAndCi(wpmValues);
-      const errStats = meanAndCi(errValues);
-      return {
-        prevLayout,
-        wpm: wpmStats.mean,
-        wpmCi: wpmStats.ci,
-        wpmN: wpmStats.n,
-        err: errStats.mean,
-        errCi: errStats.ci,
-        errN: errStats.n,
-      };
-    });
-
-    const carryoverAnovaWpm = oneWayAnova(
-      Array.from(carryoverGroups.entries()).map(([prevLayout, metrics]) => ({
-        label: prevLayout,
-        values: metrics.map((m) => m.wpm).filter(Number.isFinite),
-      }))
-    );
-    const carryoverAnovaErr = oneWayAnova(
-      Array.from(carryoverGroups.entries()).map(([prevLayout, metrics]) => ({
-        label: prevLayout,
-        values: metrics.map((m) => m.errorRate).filter(Number.isFinite),
-      }))
-    );
-
-    return {
-      positionSummary,
-      orderWpmStats,
-      orderErrStats,
-      orderWpmFriedman,
-      orderErrFriedman,
-      carryoverSummary,
-      carryoverAnovaWpm,
-      carryoverAnovaErr,
-    };
-  }
-
-  function computeSpeedAccuracySummary(analysis) {
-    const byLayout = analysis.layouts.map((layoutId) => {
-      const values = analysis.perLayoutParticipantMeans.get(layoutId);
-      if (!values) return { layoutId, r: null, n: 0 };
-      const r = pearsonCorrelation(values.wpm, values.errorRate);
-      return { layoutId, r, n: Math.min(values.wpm.length, values.errorRate.length) };
-    });
-    const allWpm = [];
-    const allErr = [];
-    analysis.perLayoutParticipantMeans.forEach((values) => {
-      values.wpm.forEach((v) => allWpm.push(v));
-      values.errorRate.forEach((v) => allErr.push(v));
-    });
-    const overall = pearsonCorrelation(allWpm, allErr);
-    return { overall, byLayout };
-  }
-
-  function computeTlxSummary(rows, participantMeans) {
-    const participantMap = new Map();
-    rows.forEach((row) => {
-      const pid = row.participantId || "unknown";
-      if (!participantMap.has(pid)) {
-        participantMap.set(pid, { values: {}, overall: [] });
-      }
-      const entry = participantMap.get(pid);
-      TLX_FIELDS.forEach((field) => {
-        const value = toNumber(row[field.key], null);
-        if (!Number.isFinite(value)) return;
-        if (!entry.values[field.key]) entry.values[field.key] = [];
-        entry.values[field.key].push(value);
-      });
-      const overall = toNumber(row.tlxOverall, null);
-      if (Number.isFinite(overall)) entry.overall.push(overall);
-    });
-
-    const participants = [];
-    const warnings = [];
-    participantMap.forEach((entry, pid) => {
-      const participant = { participantId: pid, values: {}, overall: null };
-      let hasAny = false;
-      TLX_FIELDS.forEach((field) => {
-        const list = entry.values[field.key] || [];
-        if (!list.length) return;
-        hasAny = true;
-        const uniques = Array.from(new Set(list.map((v) => v.toFixed(2))));
-        if (uniques.length > 1) {
-          warnings.push(`NASA-TLX ${field.label} inconsistent for ${pid} (${uniques.join(", ")})`);
-        }
-        participant.values[field.key] = mean(list);
-      });
-      if (entry.overall.length) {
-        const uniques = Array.from(new Set(entry.overall.map((v) => v.toFixed(2))));
-        if (uniques.length > 1) {
-          warnings.push(`NASA-TLX overall inconsistent for ${pid} (${uniques.join(", ")})`);
-        }
-        participant.overall = mean(entry.overall);
-      } else {
-        const values = TLX_FIELDS.map((field) => participant.values[field.key]).filter(Number.isFinite);
-        if (values.length === TLX_FIELDS.length) participant.overall = mean(values);
-      }
-      if (hasAny) participants.push(participant);
-    });
-
-    if (!participants.length) {
-      return { available: false, warnings: [] };
-    }
-
-    const perScale = TLX_FIELDS.map((field) => {
-      const values = participants.map((p) => p.values[field.key]).filter(Number.isFinite);
-      const stats = meanAndCi(values);
-      return { ...field, mean: stats.mean, ci: stats.ci, n: stats.n };
-    });
-    const overallValues = participants.map((p) => p.overall).filter(Number.isFinite);
-    const overallStats = meanAndCi(overallValues);
-
-    const correlations = participantMeans
-      ? (() => {
-          const tlxOverallByParticipant = new Map(
-            participants.filter((p) => Number.isFinite(p.overall)).map((p) => [p.participantId, p.overall])
-          );
-          const tlxForWpm = [];
-          const wpmForTlx = [];
-          const tlxForErr = [];
-          const errForTlx = [];
-          participantMeans.forEach((layoutMap, pid) => {
-            const tlxOverall = tlxOverallByParticipant.get(pid);
-            if (!Number.isFinite(tlxOverall)) return;
-            const wpmVals = [];
-            const errVals = [];
-            layoutMap.forEach((metrics) => {
-              if (Number.isFinite(metrics.wpm)) wpmVals.push(metrics.wpm);
-              if (Number.isFinite(metrics.errorRate)) errVals.push(metrics.errorRate);
-            });
-            const wpmMean = mean(wpmVals);
-            const errMean = mean(errVals);
-            if (Number.isFinite(wpmMean)) {
-              tlxForWpm.push(tlxOverall);
-              wpmForTlx.push(wpmMean);
-            }
-            if (Number.isFinite(errMean)) {
-              tlxForErr.push(tlxOverall);
-              errForTlx.push(errMean);
-            }
-          });
-          return {
-            wpm: { r: pearsonCorrelation(tlxForWpm, wpmForTlx), n: wpmForTlx.length },
-            errorRate: { r: pearsonCorrelation(tlxForErr, errForTlx), n: errForTlx.length },
-          };
-        })()
-      : null;
-
-    return {
-      available: true,
-      participants: participants.length,
-      perScale,
-      overall: { mean: overallStats.mean, ci: overallStats.ci, n: overallStats.n },
-      correlations,
-      warnings,
-    };
-  }
-
-  function computeAnalysisData(rows, thresholds) {
+  function computeAnalysisData(rows, thresholds, tlxRows = []) {
     const warnings = [];
     const layouts = [];
     const layoutSet = new Set();
@@ -1366,13 +1066,6 @@
       const errorRate = computeErrorRate(editDistance, charCount);
       const elapsedSeconds = Number.isFinite(elapsedMs) ? elapsedMs / 1000 : null;
       const backspaceCount = toNumber(row.backspaceCount, null);
-      const keypressCount = toNumber(row.keypressCount, null);
-      const kspc =
-        Number.isFinite(keypressCount) && Number.isFinite(charCount) && charCount > 0
-          ? keypressCount / charCount
-          : null;
-      const efficiency =
-        Number.isFinite(wpm) && Number.isFinite(errorRate) ? wpm * (1 - errorRate) : null;
 
       if (!layoutSet.has(layoutId)) {
         layoutSet.add(layoutId);
@@ -1400,9 +1093,6 @@
           editDistance,
           elapsedSeconds,
           backspaceCount,
-          keypressCount,
-          kspc,
-          efficiency,
         },
       });
     });
@@ -1411,9 +1101,71 @@
     const participantMap = buildParticipantMaps(trials);
     const participantMeans = computeParticipantMeans(participantMap);
     const perLayoutParticipantMeans = computeLayoutParticipantMeans(participantMeans, layouts);
-    const learningCurves = computeLearningCurves(trials, layouts);
-    const dataQuality = computeDataQuality(rows, analysisRows, thresholds, layouts);
-    const tlxSummary = computeTlxSummary(rows, participantMeans);
+
+    // ── TLX data processing ──────────────────────────────────────────────────
+    const tlxParticipantMeans = new Map(); // participantId -> Map(layoutId -> { tlxOverall, tlxMental, ... })
+    const tlxPerLayoutMeans = new Map();   // layoutId -> { tlxOverall: [], tlxMental: [], ... }
+
+    if (tlxRows.length) {
+      // Build (sessionId, layoutIndex) → layoutId from ALL trial rows (incl. learning/practice)
+      const sessionLayoutMap = new Map();
+      rows.forEach((row) => {
+        const sid = String(row.sessionId || "").trim();
+        const idx = toNumber(row.layoutIndex, null);
+        const id = String(row.layoutId || "").trim();
+        if (sid && idx != null && id) {
+          const key = `${sid}|${idx}`;
+          if (!sessionLayoutMap.has(key)) sessionLayoutMap.set(key, id);
+        }
+      });
+
+      // Hardcoded fallback: layoutName (display) → layoutId
+      const layoutNameToId = new Map([
+        ["Clancy (Custom)", "clancy_custom"],
+        ["FakeQwerty", "fake_qwerty"],
+        ["FittsOrSomething", "fits_or_something"],
+      ]);
+
+      // Group TLX rows by participant + layout
+      tlxRows.forEach((row) => {
+        const pid = row.participantId;
+        const sid = String(row.sessionId || "").trim();
+        const idx = toNumber(row.layoutIndex, null);
+        const key = sid && idx != null ? `${sid}|${idx}` : "";
+        const rawName = String(row.layoutName || "").trim();
+        const lid = sessionLayoutMap.get(key) || layoutNameToId.get(rawName) || rawName;
+        if (!pid || !lid) return;
+
+        const scores = {};
+        let validCount = 0;
+        TLX_FIELDS.forEach((field) => {
+          const v = toNumber(row[field.key], null);
+          scores[field.key] = v;
+          if (Number.isFinite(v)) validCount++;
+        });
+        if (validCount !== TLX_FIELDS.length) return; // skip incomplete rows
+
+        scores.tlxOverall = TLX_FIELDS.reduce((sum, f) => sum + scores[f.key], 0) / TLX_FIELDS.length;
+
+        if (!tlxParticipantMeans.has(pid)) tlxParticipantMeans.set(pid, new Map());
+        tlxParticipantMeans.get(pid).set(lid, scores);
+      });
+
+      // Build per-layout arrays for charting
+      layouts.forEach((layoutId) => {
+        const bucket = { tlxOverall: [] };
+        TLX_FIELDS.forEach((f) => { bucket[f.key] = []; });
+        tlxParticipantMeans.forEach((layoutMap) => {
+          const scores = layoutMap.get(layoutId);
+          if (!scores) return;
+          if (Number.isFinite(scores.tlxOverall)) bucket.tlxOverall.push(scores.tlxOverall);
+          TLX_FIELDS.forEach((f) => {
+            if (Number.isFinite(scores[f.key])) bucket[f.key].push(scores[f.key]);
+          });
+        });
+        tlxPerLayoutMeans.set(layoutId, bucket);
+      });
+    }
 
     const analysis = {
       summary: {
@@ -1427,14 +1179,9 @@
       trials,
       participantMeans,
       perLayoutParticipantMeans,
-      learningCurves,
-      dataQuality,
+      tlxParticipantMeans,
+      tlxPerLayoutMeans,
     };
-    analysis.primaryOutcomes = computePrimaryOutcomes(analysis);
-    analysis.learningSummary = computeLearningSummary(analysis);
-    analysis.orderEffects = computeOrderEffects(analysis);
-    analysis.speedAccuracySummary = computeSpeedAccuracySummary(analysis);
-    analysis.tlxSummary = tlxSummary;
     return analysis;
   }
 
@@ -1443,7 +1190,6 @@
     summaryEl.innerHTML = `
       <div><strong>Participants:</strong> ${summary.participantCount}</div>
       <div><strong>Layouts:</strong> ${summary.layoutCount}</div>
-      <div><strong>Warnings:</strong> ${summary.warnings.length}</div>
     `;
   }
 
@@ -1454,96 +1200,6 @@
     el.innerHTML = `
       <div class="${ok ? "badgeOk" : "badgeWarn"}">${ok ? "Pass" : "Review"}</div>
       <div class="hint">${detail}</div>
-    `;
-  }
-
-  function renderKeyFindings(summary, primary) {
-    const container = $("analysisKeyFindings");
-    if (!summary || !primary) {
-      container.textContent = "No key findings available.";
-      return;
-    }
-    const bestWpm = primary.bestWpm
-      ? `${primary.bestWpm.layoutId} (${formatNumber(primary.bestWpm.mean, 2)} WPM)`
-      : "n/a";
-    const bestErr = primary.bestErr
-      ? `${primary.bestErr.layoutId} (${formatNumber(primary.bestErr.mean, 3)})`
-      : "n/a";
-    const wpmN = primary.wpm?.stats?.nUsed ?? "n/a";
-    const errN = primary.errorRate?.stats?.nUsed ?? "n/a";
-    container.innerHTML = `
-      <div><strong>Baseline:</strong> ${primary.baseline ?? "n/a"}</div>
-      <div><strong>Best WPM:</strong> ${bestWpm}</div>
-      <div><strong>Lowest error:</strong> ${bestErr}</div>
-      <div><strong>Participants used:</strong> WPM ${wpmN}, Error ${errN}</div>
-      <div><strong>Warnings:</strong> ${summary.warnings.length}</div>
-    `;
-  }
-
-  function renderWarnings(warnings) {
-    const container = $("analysisWarnings");
-    container.innerHTML = "";
-    (warnings || []).slice(0, 6).forEach((w) => {
-      const div = document.createElement("div");
-      div.className = "warningItem";
-      div.textContent = w;
-      container.appendChild(div);
-    });
-  }
-
-  function renderTlxSummary(summary) {
-    const container = $("analysisTlxSummary");
-    if (!summary || !summary.available) {
-      container.textContent = "No NASA-TLX data available.";
-      return;
-    }
-    const overall =
-      summary.overall && summary.overall.mean != null
-        ? `${summary.overall.mean.toFixed(1)}${summary.overall.ci != null ? ` ± ${summary.overall.ci.toFixed(1)}` : ""}`
-        : "n/a";
-    const wpmCorr = summary.correlations?.wpm?.r;
-    const errCorr = summary.correlations?.errorRate?.r;
-    const wpmCorrLine =
-      wpmCorr != null
-        ? `TLX vs WPM r = ${wpmCorr.toFixed(3)} (n = ${summary.correlations.wpm.n})`
-        : "TLX vs WPM r = n/a";
-    const errCorrLine =
-      errCorr != null
-        ? `TLX vs error rate r = ${errCorr.toFixed(3)} (n = ${summary.correlations.errorRate.n})`
-        : "TLX vs error rate r = n/a";
-    container.innerHTML = `
-      <div><strong>Participants with TLX:</strong> ${summary.participants}</div>
-      <div><strong>Overall TLX:</strong> ${overall}</div>
-      <div class="hint">${wpmCorrLine}</div>
-      <div class="hint">${errCorrLine}</div>
-      <div class="tableWrap" style="margin-top: 8px">
-        <table class="table tableDense">
-          <thead>
-            <tr>
-              <th>Scale</th>
-              <th>Mean ± CI</th>
-              <th>n</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${summary.perScale
-              .map(
-                (row) => `
-              <tr>
-                <td>${row.label}</td>
-                <td>${
-                  row.mean != null
-                    ? `${row.mean.toFixed(row.decimals)}${row.ci != null ? ` ± ${row.ci.toFixed(row.decimals)}` : ""}`
-                    : "n/a"
-                }</td>
-                <td>${row.n}</td>
-              </tr>
-            `
-              )
-              .join("")}
-          </tbody>
-        </table>
-      </div>
     `;
   }
 
@@ -1569,420 +1225,7 @@
     });
   }
 
-  function renderDataQuality(qc) {
-    const container = $("analysisDataQuality");
-    if (!qc) {
-      container.textContent = "No quality data available.";
-      return;
-    }
-    const missingRows = [
-      ["participantId", qc.missing.participantId],
-      ["layoutId", qc.missing.layoutId],
-      ["wpm", qc.missing.wpm],
-      ["editDistance", qc.missing.editDistance],
-      ["charCount", qc.missing.charCount],
-      ["elapsedMs", qc.missing.elapsedMs],
-    ];
-    container.innerHTML = `
-      <div><strong>Total rows:</strong> ${qc.totalRows}</div>
-      <div><strong>Rows used:</strong> ${qc.usedRows}</div>
-      <div><strong>Practice rows:</strong> ${qc.practiceRows}</div>
-      <div><strong>Excluded practice:</strong> ${qc.excludedPractice}</div>
-      <div><strong>Learning rows:</strong> ${qc.learningRows}</div>
-      <div><strong>Excluded learning:</strong> ${qc.excludedLearning}</div>
-      <div><strong>Participants:</strong> ${qc.participantCount}</div>
-      <div><strong>Layouts:</strong> ${qc.layoutCount}</div>
-      <div><strong>Short trials:</strong> ${qc.shortTrials}</div>
-      <div><strong>High error rows:</strong> ${qc.highError}</div>
-      <div><strong>Duplicate trials:</strong> ${qc.duplicateTrials}</div>
-      <div><strong>Incomplete participants:</strong> ${qc.incompleteParticipants}</div>
-      <div class="tableWrap" style="margin-top: 8px">
-        <table class="table tableDense">
-          <thead>
-            <tr>
-              <th>Missing field</th>
-              <th>Count</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${missingRows
-              .map(
-                ([label, count]) => `
-              <tr>
-                <td>${label}</td>
-                <td>${count}</td>
-              </tr>
-            `
-              )
-              .join("")}
-          </tbody>
-        </table>
-      </div>
-    `;
-  }
-
-  function renderPrimaryOutcomes(primary) {
-    const container = $("analysisPrimaryOutcomes");
-    if (!primary) {
-      container.textContent = "No primary outcomes available.";
-      return;
-    }
-    const baseline = primary.baseline;
-    const buildTable = (rows, metricLabel, decimals) => `
-      <div class="statTitle" style="margin-top: 6px">${metricLabel} vs baseline (${baseline})</div>
-      <div class="tableWrap">
-        <table class="table tableDense">
-          <thead>
-            <tr>
-              <th>Layout</th>
-              <th>Mean ± CI</th>
-              <th>Δ vs baseline</th>
-              <th>p (Holm)</th>
-              <th>Effect</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${rows
-              .map(
-                (row) => `
-              <tr>
-                <td>${row.layoutId}</td>
-                <td>${
-                  row.mean != null
-                    ? `${row.mean.toFixed(decimals)}${row.ci != null ? ` ± ${row.ci.toFixed(decimals)}` : ""}`
-                    : "n/a"
-                }</td>
-                <td>${row.delta != null ? row.delta.toFixed(decimals) : "n/a"}</td>
-                <td>${row.pAdj != null ? row.pAdj.toFixed(4) : "n/a"}</td>
-                <td>${row.effect != null ? row.effect.toFixed(3) : "n/a"}</td>
-              </tr>
-            `
-              )
-              .join("")}
-          </tbody>
-        </table>
-      </div>
-    `;
-    container.innerHTML = `
-      <div><strong>WPM test:</strong> ${primary.wpm.testSummary}</div>
-      <div><strong>Error rate test:</strong> ${primary.errorRate.testSummary}</div>
-      ${buildTable(primary.wpm.layoutStats, "WPM", 2)}
-      ${buildTable(primary.errorRate.layoutStats, "Error rate", 3)}
-    `;
-  }
-
-  function renderLearningSummary(summary) {
-    const container = $("analysisLearningSummary");
-    if (!summary || !summary.length) {
-      container.textContent = "No learning summary available.";
-      return;
-    }
-    container.innerHTML = `
-      <div class="tableWrap">
-        <table class="table tableDense">
-          <thead>
-            <tr>
-              <th>Layout</th>
-              <th>Early WPM</th>
-              <th>Late WPM</th>
-              <th>Δ WPM</th>
-              <th>Slope WPM</th>
-              <th>Early error</th>
-              <th>Late error</th>
-              <th>Δ error</th>
-              <th>Slope error</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${summary
-              .map(
-                (row) => `
-              <tr>
-                <td>${row.layoutId}</td>
-                <td>${row.earlyWpm != null ? row.earlyWpm.toFixed(2) : "n/a"}</td>
-                <td>${row.lateWpm != null ? row.lateWpm.toFixed(2) : "n/a"}</td>
-                <td>${row.deltaWpm != null ? row.deltaWpm.toFixed(2) : "n/a"}</td>
-                <td>${row.slopeWpm != null ? row.slopeWpm.toFixed(3) : "n/a"}</td>
-                <td>${row.earlyErr != null ? row.earlyErr.toFixed(3) : "n/a"}</td>
-                <td>${row.lateErr != null ? row.lateErr.toFixed(3) : "n/a"}</td>
-                <td>${row.deltaErr != null ? row.deltaErr.toFixed(3) : "n/a"}</td>
-                <td>${row.slopeErr != null ? row.slopeErr.toFixed(4) : "n/a"}</td>
-              </tr>
-            `
-              )
-              .join("")}
-          </tbody>
-        </table>
-      </div>
-    `;
-  }
-
-  function renderOrderSummary(orderEffects) {
-    const container = $("analysisOrderSummary");
-    if (!orderEffects) {
-      container.textContent = "No order/carryover summary available.";
-      return;
-    }
-    const orderStatsLine = orderEffects.orderWpmStats
-      ? `Order WPM RM-ANOVA F(${orderEffects.orderWpmStats.df1}, ${orderEffects.orderWpmStats.df2}) = ${formatNumber(
-          orderEffects.orderWpmStats.F,
-          3
-        )}, p = ${formatNumber(orderEffects.orderWpmStats.p, 4)}`
-      : orderEffects.orderWpmFriedman
-        ? `Order WPM Friedman χ²(${orderEffects.orderWpmFriedman.df}) = ${formatNumber(
-            orderEffects.orderWpmFriedman.chi2,
-            3
-          )}, p = ${formatNumber(orderEffects.orderWpmFriedman.p, 4)}`
-        : "Order WPM stats: n/a";
-    const orderErrLine = orderEffects.orderErrStats
-      ? `Order error RM-ANOVA F(${orderEffects.orderErrStats.df1}, ${orderEffects.orderErrStats.df2}) = ${formatNumber(
-          orderEffects.orderErrStats.F,
-          3
-        )}, p = ${formatNumber(orderEffects.orderErrStats.p, 4)}`
-      : orderEffects.orderErrFriedman
-        ? `Order error Friedman χ²(${orderEffects.orderErrFriedman.df}) = ${formatNumber(
-            orderEffects.orderErrFriedman.chi2,
-            3
-          )}, p = ${formatNumber(orderEffects.orderErrFriedman.p, 4)}`
-        : "Order error stats: n/a";
-    const carryoverStatsLine = orderEffects.carryoverAnovaWpm
-      ? `Carryover WPM ANOVA F(${orderEffects.carryoverAnovaWpm.df1}, ${orderEffects.carryoverAnovaWpm.df2}) = ${formatNumber(
-          orderEffects.carryoverAnovaWpm.F,
-          3
-        )}, p = ${formatNumber(orderEffects.carryoverAnovaWpm.p, 4)}`
-      : "Carryover WPM ANOVA: n/a";
-    const carryoverErrLine = orderEffects.carryoverAnovaErr
-      ? `Carryover error ANOVA F(${orderEffects.carryoverAnovaErr.df1}, ${orderEffects.carryoverAnovaErr.df2}) = ${formatNumber(
-          orderEffects.carryoverAnovaErr.F,
-          3
-        )}, p = ${formatNumber(orderEffects.carryoverAnovaErr.p, 4)}`
-      : "Carryover error ANOVA: n/a";
-    container.innerHTML = `
-      <div><strong>${orderStatsLine}</strong></div>
-      <div><strong>${orderErrLine}</strong></div>
-      <div><strong>${carryoverStatsLine}</strong></div>
-      <div><strong>${carryoverErrLine}</strong></div>
-      <div class="hint">Carryover stats are simple one-way tests on transitions.</div>
-      <div class="tableWrap" style="margin-top: 8px">
-        <div class="statTitle">Order position effects</div>
-        <table class="table tableDense">
-          <thead>
-            <tr>
-              <th>Position</th>
-              <th>Mean WPM ± CI</th>
-              <th>Mean error ± CI</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${orderEffects.positionSummary
-              .map(
-                (row) => `
-              <tr>
-                <td>${row.position}</td>
-                <td>${
-                  row.wpm != null
-                    ? `${row.wpm.toFixed(2)}${row.wpmCi != null ? ` ± ${row.wpmCi.toFixed(2)}` : ""}`
-                    : "n/a"
-                }</td>
-                <td>${
-                  row.err != null
-                    ? `${row.err.toFixed(3)}${row.errCi != null ? ` ± ${row.errCi.toFixed(3)}` : ""}`
-                    : "n/a"
-                }</td>
-              </tr>
-            `
-              )
-              .join("")}
-          </tbody>
-        </table>
-      </div>
-      <div class="tableWrap" style="margin-top: 8px">
-        <div class="statTitle">Carryover by previous layout</div>
-        <table class="table tableDense">
-          <thead>
-            <tr>
-              <th>Prev layout</th>
-              <th>Mean WPM ± CI</th>
-              <th>Mean error ± CI</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${orderEffects.carryoverSummary
-              .map(
-                (row) => `
-              <tr>
-                <td>${row.prevLayout}</td>
-                <td>${
-                  row.wpm != null
-                    ? `${row.wpm.toFixed(2)}${row.wpmCi != null ? ` ± ${row.wpmCi.toFixed(2)}` : ""}`
-                    : "n/a"
-                }</td>
-                <td>${
-                  row.err != null
-                    ? `${row.err.toFixed(3)}${row.errCi != null ? ` ± ${row.errCi.toFixed(3)}` : ""}`
-                    : "n/a"
-                }</td>
-              </tr>
-            `
-              )
-              .join("")}
-          </tbody>
-        </table>
-      </div>
-    `;
-  }
-
-  function renderSpeedAccuracyStats(summary) {
-    const container = $("speedAccuracyStats");
-    if (!summary) {
-      container.textContent = "";
-      return;
-    }
-    const overall = summary.overall != null ? summary.overall.toFixed(3) : "n/a";
-    container.innerHTML = `
-      <div><strong>Overall r:</strong> ${overall}</div>
-      ${summary.byLayout
-        .map(
-          (row) =>
-            `<div><strong>${row.layoutId}:</strong> ${row.r != null ? row.r.toFixed(3) : "n/a"}</div>`
-        )
-        .join("")}
-    `;
-  }
-
-  function renderDashboard(analysis, thresholds, statusEl) {
-    const baseWarnings = analysis.summary.warnings || [];
-    renderMetricPanels(analysis.layouts);
-
-    const extraWarnings = [];
-    if (analysis.dataQuality) {
-      const qc = analysis.dataQuality;
-      if (qc.duplicateTrials > 0) {
-        extraWarnings.push(`Duplicate trials detected: ${qc.duplicateTrials}`);
-      }
-      if (qc.incompleteParticipants > 0) {
-        extraWarnings.push(`Participants with incomplete layouts: ${qc.incompleteParticipants}`);
-      }
-      if (qc.missing.wpm > 0 || qc.missing.editDistance > 0 || qc.missing.charCount > 0 || qc.missing.elapsedMs > 0) {
-        extraWarnings.push(
-          `Missing values: wpm ${qc.missing.wpm}, editDistance ${qc.missing.editDistance}, charCount ${qc.missing.charCount}, elapsedMs ${qc.missing.elapsedMs}`
-        );
-      }
-    }
-    if (analysis.tlxSummary?.warnings?.length) {
-      extraWarnings.push(...analysis.tlxSummary.warnings);
-    }
-    let canPlot = true;
-    if (statusEl) {
-      canPlot = ensureLibraries(statusEl);
-    }
-
-    if (canPlot) {
-      const colorMap = createLayoutColorMap(analysis.layouts);
-      plotSpeedAccuracy(analysis.layouts, analysis.participantMeans, colorMap);
-
-      METRICS.forEach((metric) => {
-        const stats = computeMetricStats(
-          metric.key,
-          analysis.participantMeans,
-          analysis.layouts,
-          analysis.participants
-        );
-
-        if (stats.posthocParamOmitted) {
-          extraWarnings.push(
-            `${metric.label}: parametric post-hoc omitted ${stats.posthocParamOmitted} pair(s) due to missing data`
-          );
-        }
-        if (stats.posthocNonParamOmitted) {
-          extraWarnings.push(
-            `${metric.label}: non-parametric post-hoc omitted ${stats.posthocNonParamOmitted} pair(s) due to missing data`
-          );
-        }
-        if (stats.insufficientVariation) {
-          extraWarnings.push(`${metric.label}: insufficient variation for parametric recommendation`);
-        }
-        if (stats.insufficientSample) {
-          extraWarnings.push(`${metric.label}: sample size too small for reliable recommendation`);
-        }
-
-        const subtitle = $("metric-" + metric.key + "-subtitle");
-        if (subtitle) {
-          subtitle.textContent = `Participants used: ${stats.nUsed} (excluded: ${
-            stats.excluded.length ? stats.excluded.length : 0
-          })`;
-        }
-        const badge = $("metric-" + metric.key + "-badge");
-        if (badge) {
-          badge.textContent = stats.recommendation;
-        }
-        renderStatsTable(metric.key, analysis.layouts, stats);
-
-        plotDistribution(metric.key, analysis.layouts, analysis.perLayoutParticipantMeans, colorMap);
-        plotMeanCi(metric.key, analysis.layouts, analysis.perLayoutParticipantMeans, colorMap);
-
-        const { participants, matrix } = getCompleteCaseMatrix(
-          metric.key,
-          analysis.participantMeans,
-          analysis.layouts
-        );
-        plotPaired(metric.key, analysis.layouts, matrix, participants, colorMap);
-        plotLearning(metric.key, analysis.layouts, analysis.learningCurves, colorMap);
-      });
-    }
-
-    const mergedWarnings = mergeWarnings(baseWarnings, extraWarnings);
-    const summaryForUi = { ...analysis.summary, warnings: mergedWarnings };
-    renderAnalysisSummary(summaryForUi);
-    renderEligibility(summaryForUi, thresholds);
-    renderKeyFindings(summaryForUi, analysis.primaryOutcomes);
-    renderWarnings(mergedWarnings);
-    renderAnalysisTable(analysis.summary.layouts || []);
-    renderDataQuality(analysis.dataQuality);
-    renderPrimaryOutcomes(analysis.primaryOutcomes);
-    renderTlxSummary(analysis.tlxSummary);
-    renderLearningSummary(analysis.learningSummary);
-    renderOrderSummary(analysis.orderEffects);
-    renderSpeedAccuracyStats(analysis.speedAccuracySummary);
-  }
-
-  function renderMetricPanels(layouts) {
-    const container = $("metricsDashboard");
-    container.innerHTML = "";
-    METRICS.forEach((metric) => {
-      const panel = document.createElement("div");
-      panel.className = "metricPanel";
-      panel.innerHTML = `
-        <div class="metricHeader">
-          <div>
-            <div class="studyTitle">${metric.label}</div>
-            <div class="hint" id="metric-${metric.key}-subtitle"></div>
-          </div>
-          <div class="metricBadge" id="metric-${metric.key}-badge"></div>
-        </div>
-        <div class="chartGrid">
-          <div class="chartCard">
-            <div class="chartTitle">Distribution</div>
-            <div id="chart-${metric.key}-dist" class="chart"></div>
-          </div>
-          <div class="chartCard">
-            <div class="chartTitle">Mean + 95% CI</div>
-            <div id="chart-${metric.key}-mean" class="chart"></div>
-          </div>
-          <div class="chartCard">
-            <div class="chartTitle">Paired lines</div>
-            <div id="chart-${metric.key}-paired" class="chart"></div>
-          </div>
-          <div class="chartCard">
-            <div class="chartTitle">Learning curve</div>
-            <div id="chart-${metric.key}-learning" class="chart"></div>
-          </div>
-        </div>
-        <div class="statSection" id="stats-${metric.key}"></div>
-      `;
-      container.appendChild(panel);
-    });
-  }
+  // ── Chart helpers ──────────────────────────────────────────────────────────
 
   function plotlyLayoutBase(title) {
     return {
@@ -2069,245 +1312,667 @@
     Plotly.react(el, traces, plotlyLayoutBase("Paired lines"));
   }
 
-  function plotLearning(metricKey, layouts, learningCurves, colorMap) {
-    const el = document.getElementById(`chart-${metricKey}-learning`);
-    if (!el) return;
-    const traces = [];
-    layouts.forEach((layoutId) => {
-      const curve = learningCurves.get(layoutId);
-      if (!curve) return;
-      const indices = Array.from(curve.keys()).sort((a, b) => a - b);
-      const means = [];
-      const errors = [];
-      indices.forEach((idx) => {
-        const values = curve.get(idx)[metricKey] ?? [];
-        const m = mean(values) ?? 0;
-        const sd = stdev(values) ?? 0;
-        const err = values.length > 1 ? (CI_Z * sd) / Math.sqrt(values.length) : 0;
-        means.push(m);
-        errors.push(err);
-      });
-      traces.push({
-        type: "scatter",
-        mode: "lines+markers",
-        x: indices,
-        y: means,
-        name: layoutId,
-        line: { color: colorMap.get(layoutId) },
-        marker: { size: 6 },
-        error_y: { type: "data", array: errors, visible: true },
-      });
-    });
-    Plotly.react(el, traces, plotlyLayoutBase("Learning curve"));
-  }
+  // ── New analysis flow ───────────────────────────────────────────────────────
+  function renderAnalysisFlow(analysis, thresholds, statusEl) {
+    // Keep the top-level summary table and cards working
+    renderAnalysisSummary(analysis.summary);
+    renderEligibility(analysis.summary, thresholds);
+    renderAnalysisTable(analysis.summary.layouts || []);
 
-  function plotSpeedAccuracy(layouts, participantMeans, colorMap) {
-    const el = document.getElementById("chartSpeedAccuracy");
-    if (!el) return;
-    const traces = layouts.map((layoutId) => {
-      const x = [];
-      const y = [];
-      participantMeans.forEach((layoutMap) => {
-        const values = layoutMap.get(layoutId);
-        if (!values) return;
-        if (Number.isFinite(values.wpm) && Number.isFinite(values.errorRate)) {
-          x.push(values.wpm);
-          y.push(values.errorRate);
-        }
-      });
-      return {
-        type: "scatter",
-        mode: "markers",
-        name: layoutId,
-        x,
-        y,
-        marker: { size: 8, color: colorMap.get(layoutId) },
-      };
-    });
-    Plotly.react(el, traces, plotlyLayoutBase("Speed–accuracy tradeoff"));
-  }
+    // Populate key findings with basic WPM info
+    const keyFindingsEl = document.getElementById("analysisKeyFindings");
+    if (keyFindingsEl) {
+      const layoutWpms = (analysis.summary.layouts || []).map((r) => ({
+        id: r.layoutId,
+        wpm: r.meanWpm,
+      }));
+      const best = layoutWpms.reduce((a, b) => (b.wpm > a.wpm ? b : a), layoutWpms[0] || { id: "n/a", wpm: 0 });
+      const worst = layoutWpms.reduce((a, b) => (b.wpm < a.wpm ? b : a), layoutWpms[0] || { id: "n/a", wpm: 0 });
+      keyFindingsEl.innerHTML = `
+        <div><strong>Fastest layout:</strong> ${best.id} (${formatNumber(best.wpm, 2)} WPM)</div>
+        <div><strong>Slowest layout:</strong> ${worst.id} (${formatNumber(worst.wpm, 2)} WPM)</div>
+      `;
+    }
 
-  function renderStatsTable(metricKey, layouts, stats) {
-    const container = $("stats-" + metricKey);
-    container.innerHTML = "";
-    if (!stats) {
-      container.innerHTML = `<div class="hint">Not enough data to compute stats.</div>`;
+    // ── Step 1: Data overview ───────────────────────────────────────────────
+    const overviewEl = $("analysisDataOverview");
+    const layoutNames = analysis.layouts.join(", ");
+    const trialsPerLayout = analysis.summary.layouts
+      ? analysis.summary.layouts.map((r) => `${r.layoutId}: ${r.trials}`).join(", ")
+      : "n/a";
+    overviewEl.innerHTML = `
+      <div><strong>Participants:</strong> ${analysis.summary.participantCount}</div>
+      <div><strong>Layouts:</strong> ${analysis.summary.layoutCount} (${layoutNames})</div>
+      <div><strong>Trials per layout:</strong> ${trialsPerLayout}</div>
+      <div class="hint" style="margin-top: 6px">Only <code>trialType = main</code> trials are included. Learning and practice trials are excluded.</div>
+    `;
+
+    // ── Step 2: Assumption checks ───────────────────────────────────────────
+    const { participants: wpmParticipants, matrix: wpmMatrix } = getCompleteCaseMatrix(
+      "wpm",
+      analysis.participantMeans,
+      analysis.layouts
+    );
+
+    const verdictEl = $("assumptionVerdict");
+    const shapiroEl = $("shapiroResults");
+    const mauchlySection = $("mauchlySection");
+    const mauchlyEl = $("mauchlyResults");
+
+    if (wpmParticipants.length < 3) {
+      verdictEl.innerHTML = `<div class="badgeWarn" style="padding: 10px; font-size: 1.1em;">Not enough complete-case participants (${wpmParticipants.length}) to run assumption checks. Need at least 3.</div>`;
+      shapiroEl.innerHTML = "";
+      mauchlySection.style.display = "none";
+      renderWpmAnalysisInsufficient(wpmParticipants.length);
+      renderTlxAnalysis(analysis, statusEl);
       return;
     }
-    const {
-      anova,
-      friedman,
-      posthocParam,
-      posthocNonParam,
-      recommendation,
-      nUsed,
-      excluded,
-      posthocParamOmitted,
-      posthocNonParamOmitted,
-      insufficientVariation,
-      insufficientSample,
-    } = stats;
-    const statGrid = document.createElement("div");
-    statGrid.className = "statGrid";
-    statGrid.innerHTML = `
-      <div class="statCard">
-        <div class="statTitle">RM-ANOVA</div>
-        <div class="statLine">F(${anova?.df1 ?? "?"}, ${anova?.df2 ?? "?"}) = ${
-      anova?.F != null ? anova.F.toFixed(3) : "n/a"
-    }</div>
-        <div class="statLine">p = ${anova?.p != null ? anova.p.toFixed(4) : "n/a"}</div>
-        <div class="statLine">eta²p = ${anova?.eta != null ? anova.eta.toFixed(3) : "n/a"}</div>
-      </div>
-      <div class="statCard">
-        <div class="statTitle">Friedman</div>
-        <div class="statLine">χ²(${friedman?.df ?? "?"}) = ${friedman?.chi2 != null ? friedman.chi2.toFixed(3) : "n/a"}</div>
-        <div class="statLine">p = ${friedman?.p != null ? friedman.p.toFixed(4) : "n/a"}</div>
-        <div class="statLine">Kendall W = ${friedman?.w != null ? friedman.w.toFixed(3) : "n/a"}</div>
-      </div>
-      <div class="statCard">
-        <div class="statTitle">Recommendation</div>
-        <div class="statLine">${recommendation}</div>
-        <div class="statLine">n used: ${nUsed}</div>
-        <div class="statLine">excluded: ${excluded.length ? excluded.join(", ") : "none"}</div>
-      </div>
+
+    // Compute pairwise differences for Shapiro-Wilk
+    const k = analysis.layouts.length;
+    const shapiroResults = [];
+    let allNormal = true;
+    for (let a = 0; a < k; a++) {
+      for (let b = a + 1; b < k; b++) {
+        const diffs = wpmMatrix.map((row) => row[a] - row[b]);
+        const sw = shapiroWilk(diffs);
+        const pass = sw && sw.p > 0.05;
+        if (!pass) allNormal = false;
+        shapiroResults.push({
+          pairLabel: `${analysis.layouts[a]} vs ${analysis.layouts[b]}`,
+          W: sw ? sw.W : null,
+          p: sw ? sw.p : null,
+          pass,
+        });
+      }
+    }
+
+    const useParametric = allNormal;
+
+    // Render Shapiro-Wilk table
+    let shapiroHtml = `<table class="table tableDense">
+      <thead><tr><th>Pair (difference)</th><th>W</th><th>p</th><th>Verdict</th></tr></thead><tbody>`;
+    shapiroResults.forEach((row) => {
+      const verdictClass = row.pass ? "badgeOk" : "badgeWarn";
+      const verdictText = row.pass ? "Normal (p > 0.05)" : "Non-normal (p <= 0.05)";
+      shapiroHtml += `<tr>
+        <td>${row.pairLabel}</td>
+        <td>${formatNumber(row.W, 4)}</td>
+        <td>${formatNumber(row.p, 4)}</td>
+        <td><span class="${verdictClass}">${verdictText}</span></td>
+      </tr>`;
+    });
+    shapiroHtml += "</tbody></table>";
+    shapiroEl.innerHTML = shapiroHtml;
+
+    // Mauchly's test (only if parametric path and k >= 3)
+    let sphericityOk = true;
+    let ggEpsilon = 1;
+    let mauchlyResult = null;
+
+    if (useParametric && k >= 3) {
+      mauchlySection.style.display = "block";
+      mauchlyResult = mauchlyTest(wpmMatrix);
+      if (mauchlyResult) {
+        sphericityOk = mauchlyResult.p > 0.05;
+        ggEpsilon = mauchlyResult.epsilon;
+        const sphVerdictClass = sphericityOk ? "badgeOk" : "badgeWarn";
+        const sphVerdictText = sphericityOk
+          ? "Sphericity holds (p > 0.05)"
+          : `Sphericity violated (p <= 0.05) — GG epsilon = ${formatNumber(ggEpsilon, 3)}`;
+        mauchlyEl.innerHTML = `<table class="table tableDense">
+          <thead><tr><th>W</th><th>&chi;&sup2;</th><th>df</th><th>p</th><th>GG &epsilon;</th><th>Verdict</th></tr></thead>
+          <tbody><tr>
+            <td>${formatNumber(mauchlyResult.W, 4)}</td>
+            <td>${formatNumber(mauchlyResult.chi2, 3)}</td>
+            <td>${mauchlyResult.df}</td>
+            <td>${formatNumber(mauchlyResult.p, 4)}</td>
+            <td>${formatNumber(mauchlyResult.epsilon, 3)}</td>
+            <td><span class="${sphVerdictClass}">${sphVerdictText}</span></td>
+          </tr></tbody>
+        </table>`;
+      } else {
+        mauchlyEl.innerHTML = `<div class="hint">Could not compute Mauchly's test.</div>`;
+      }
+    } else if (useParametric && k < 3) {
+      mauchlySection.style.display = "none";
+    } else {
+      mauchlySection.style.display = "block";
+      mauchlyEl.innerHTML = `<div class="hint">Skipped — non-parametric path selected (Shapiro-Wilk rejected normality).</div>`;
+    }
+
+    // Render overall verdict banner
+    let verdictLabel, verdictDetail;
+    if (useParametric && sphericityOk) {
+      verdictLabel = "Parametric path";
+      verdictDetail = "Normality holds. Sphericity holds. Using RM-ANOVA (uncorrected) + paired t-tests with Holm correction.";
+    } else if (useParametric && !sphericityOk) {
+      verdictLabel = "Parametric path (GG-corrected)";
+      verdictDetail = `Normality holds. Sphericity violated. Using RM-ANOVA with Greenhouse-Geisser correction (&epsilon; = ${formatNumber(ggEpsilon, 3)}) + paired t-tests with Holm correction.`;
+    } else {
+      verdictLabel = "Non-parametric path";
+      verdictDetail = "Normality violated. Using Friedman test + Wilcoxon signed-rank with Holm correction.";
+    }
+    verdictEl.innerHTML = `
+      <div class="${useParametric ? "badgeOk" : "badgeWarn"}" style="padding: 10px 16px; font-size: 1.1em; display: inline-block; margin-bottom: 8px;">${verdictLabel}</div>
+      <div class="hint">${verdictDetail}</div>
     `;
-    container.appendChild(statGrid);
 
-    const notes = [];
-    if (posthocParamOmitted) {
-      notes.push(`Parametric post-hoc omitted ${posthocParamOmitted} pair(s) due to missing data.`);
-    }
-    if (posthocNonParamOmitted) {
-      notes.push(`Non-parametric post-hoc omitted ${posthocNonParamOmitted} pair(s) due to missing data.`);
-    }
-    if (insufficientVariation) {
-      notes.push("Insufficient variation detected; treat parametric results cautiously.");
-    }
-    if (insufficientSample) {
-      notes.push("Sample size is small; treat recommendations cautiously.");
-    }
-    if (notes.length) {
-      const noteEl = document.createElement("div");
-      noteEl.className = "hint";
-      noteEl.textContent = notes.join(" ");
-      container.appendChild(noteEl);
-    }
+    // ── Step 3: WPM analysis ────────────────────────────────────────────────
+    renderWpmAnalysis(analysis, wpmMatrix, wpmParticipants, useParametric, sphericityOk, ggEpsilon, statusEl);
 
-    const makeTable = (title, rows) => {
-      const wrap = document.createElement("div");
-      wrap.className = "statTableWrap";
-      const header = `
-        <div class="statTitle">${title}</div>
-        <div class="tableWrap">
-          <table class="table tableDense">
-            <thead>
-              <tr>
-                <th>Pair</th>
-                <th>Test</th>
-                <th>n</th>
-                <th>p</th>
-                <th>p (Holm)</th>
-                <th>Effect</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${rows
-                .map(
-                  (row) => `
-                    <tr>
-                      <td>${row.pair}</td>
-                      <td>${row.test}</td>
-                      <td>${row.n}</td>
-                      <td>${row.p != null ? row.p.toFixed(4) : "n/a"}</td>
-                      <td>${row.pAdj != null ? row.pAdj.toFixed(4) : "n/a"}</td>
-                      <td>${row.effect != null ? row.effect.toFixed(3) : "n/a"}</td>
-                    </tr>
-                  `
-                )
-                .join("")}
-            </tbody>
+    // ── Step 4: NASA-TLX analysis ───────────────────────────────────────────
+    renderTlxAnalysis(analysis, statusEl);
+  }
+
+  function renderWpmAnalysisInsufficient(n) {
+    const omnibusEl = $("wpmOmnibus");
+    omnibusEl.innerHTML = `<div class="hint">Not enough complete-case participants (${n}) to run inferential tests.</div>`;
+    $("wpmPosthoc").innerHTML = "";
+  }
+
+  function renderWpmAnalysis(analysis, wpmMatrix, wpmParticipants, useParametric, sphericityOk, ggEpsilon, statusEl) {
+    const omnibusEl = $("wpmOmnibus");
+    const posthocEl = $("wpmPosthoc");
+    const n = wpmMatrix.length;
+    const k = analysis.layouts.length;
+
+    // ── Omnibus test ──
+    let omnibusHtml = "";
+    if (useParametric) {
+      const anova = rmAnova(wpmMatrix);
+      if (anova) {
+        let df1 = anova.df1;
+        let df2 = anova.df2;
+        let pValue = anova.p;
+        let correctionNote = "";
+
+        if (!sphericityOk) {
+          // Apply Greenhouse-Geisser correction
+          df1 = anova.df1 * ggEpsilon;
+          df2 = anova.df2 * ggEpsilon;
+          pValue = window.jStat ? 1 - jStat.centralF.cdf(anova.F, df1, df2) : anova.p;
+          correctionNote = ` (Greenhouse-Geisser corrected, &epsilon; = ${formatNumber(ggEpsilon, 3)})`;
+        }
+
+        const sig = pValue < 0.05;
+        const sigLabel = sig ? "Significant" : "Not significant";
+        const sigClass = sig ? "badgeOk" : "badgeWarn";
+
+        omnibusHtml = `
+          <div class="studyTitle">Repeated-measures ANOVA${correctionNote}</div>
+          <table class="table tableDense" style="margin-top: 6px">
+            <thead><tr><th>F</th><th>df1</th><th>df2</th><th>p</th><th>&eta;&sup2;<sub>p</sub></th><th>Result</th></tr></thead>
+            <tbody><tr>
+              <td>${formatNumber(anova.F, 3)}</td>
+              <td>${formatNumber(df1, 2)}</td>
+              <td>${formatNumber(df2, 2)}</td>
+              <td>${formatNumber(pValue, 4)}</td>
+              <td>${formatNumber(anova.eta, 3)}</td>
+              <td><span class="${sigClass}">${sigLabel} (p ${sig ? "<" : ">"} 0.05)</span></td>
+            </tr></tbody>
           </table>
-        </div>
-      `;
-      wrap.innerHTML = header;
-      return wrap;
-    };
+          <div class="hint" style="margin-top: 4px">n = ${n} participants (complete cases across all ${k} layouts).</div>
+        `;
+      } else {
+        omnibusHtml = `<div class="hint">Could not compute RM-ANOVA.</div>`;
+      }
+    } else {
+      const friedman = friedmanTest(wpmMatrix);
+      if (friedman) {
+        const sig = friedman.p < 0.05;
+        const sigLabel = sig ? "Significant" : "Not significant";
+        const sigClass = sig ? "badgeOk" : "badgeWarn";
 
-    if (posthocParam && posthocParam.length) {
-      container.appendChild(makeTable("Post-hoc (parametric)", posthocParam));
+        omnibusHtml = `
+          <div class="studyTitle">Friedman test</div>
+          <table class="table tableDense" style="margin-top: 6px">
+            <thead><tr><th>&chi;&sup2;</th><th>df</th><th>p</th><th>Kendall's W</th><th>Result</th></tr></thead>
+            <tbody><tr>
+              <td>${formatNumber(friedman.chi2, 3)}</td>
+              <td>${friedman.df}</td>
+              <td>${formatNumber(friedman.p, 4)}</td>
+              <td>${formatNumber(friedman.w, 3)}</td>
+              <td><span class="${sigClass}">${sigLabel} (p ${sig ? "<" : ">"} 0.05)</span></td>
+            </tr></tbody>
+          </table>
+          <div class="hint" style="margin-top: 4px">n = ${n} participants (complete cases across all ${k} layouts).</div>
+        `;
+      } else {
+        omnibusHtml = `<div class="hint">Could not compute Friedman test.</div>`;
+      }
     }
-    if (posthocNonParam && posthocNonParam.length) {
-      container.appendChild(makeTable("Post-hoc (non-parametric)", posthocNonParam));
+    omnibusEl.innerHTML = omnibusHtml;
+
+    // ── Post-hoc pairwise comparisons ──
+    let posthocRows;
+    let posthocLabel;
+    if (useParametric) {
+      posthocRows = pairedTTests(wpmMatrix, analysis.layouts);
+      posthocLabel = "Paired t-tests with Holm correction";
+    } else {
+      posthocRows = wilcoxonTests(wpmMatrix, analysis.layouts);
+      posthocLabel = "Wilcoxon signed-rank with Holm correction";
+    }
+
+    if (posthocRows && posthocRows.length) {
+      let posthocHtml = `<div class="hint" style="margin-bottom: 6px">${posthocLabel}</div>`;
+      posthocHtml += `<table class="table tableDense">
+        <thead><tr><th>Pair</th><th>${useParametric ? "t" : "Z"}</th><th>p (raw)</th><th>p (adjusted)</th><th>Cohen's d</th><th>Result</th></tr></thead><tbody>`;
+      posthocRows.forEach((row) => {
+        const sig = row.pAdj < 0.05;
+        const sigClass = sig ? "badgeOk" : "badgeWarn";
+        const sigText = sig ? "Significant" : "Not significant";
+        const statValue = useParametric ? row.t : row.z;
+        posthocHtml += `<tr>
+          <td>${row.pair}</td>
+          <td>${formatNumber(statValue, 3)}</td>
+          <td>${formatNumber(row.p, 4)}</td>
+          <td>${formatNumber(row.pAdj, 4)}</td>
+          <td>${formatNumber(row.effect, 3)}</td>
+          <td><span class="${sigClass}">${sigText}</span></td>
+        </tr>`;
+      });
+      posthocHtml += "</tbody></table>";
+      posthocEl.innerHTML = posthocHtml;
+    } else {
+      posthocEl.innerHTML = `<div class="hint">No post-hoc comparisons available.</div>`;
+    }
+
+    // ── Charts ──
+    let canPlot = true;
+    if (statusEl) canPlot = ensureLibraries(statusEl);
+
+    if (canPlot) {
+      const colorMap = createLayoutColorMap(analysis.layouts);
+      plotDistribution("wpm", analysis.layouts, analysis.perLayoutParticipantMeans, colorMap);
+      plotMeanCi("wpm", analysis.layouts, analysis.perLayoutParticipantMeans, colorMap);
+      plotPaired("wpm", analysis.layouts, wpmMatrix, wpmParticipants, colorMap);
     }
   }
 
-  function computeMetricStats(metricKey, participantMeans, layouts, participantsAll) {
-    const { participants, matrix } = getCompleteCaseMatrix(metricKey, participantMeans, layouts);
-    const excluded = participantsAll.filter((p) => !participants.includes(p));
-    const nUsed = participants.length;
-    const expectedPairs = (layouts.length * (layouts.length - 1)) / 2;
-    if (nUsed < 2) {
+  // ── NASA-TLX analysis ──────────────────────────────────────────────────────
+
+  function getTlxCompleteCaseMatrix(metricKey, tlxParticipantMeans, layouts) {
+    const participants = [];
+    const matrix = [];
+    tlxParticipantMeans.forEach((layoutMap, participantId) => {
+      const row = [];
+      let ok = true;
+      layouts.forEach((layoutId) => {
+        const scores = layoutMap.get(layoutId);
+        const value = scores ? scores[metricKey] : null;
+        if (!Number.isFinite(value)) ok = false;
+        row.push(value);
+      });
+      if (ok) {
+        participants.push(participantId);
+        matrix.push(row);
+      }
+    });
+    return { participants, matrix };
+  }
+
+  function plotTlxSubscales(layouts, tlxPerLayoutMeans, colorMap) {
+    const el = document.getElementById("chart-tlx-subscales");
+    if (!el) return;
+    const traces = layouts.map((layoutId) => {
+      const bucket = tlxPerLayoutMeans.get(layoutId) || {};
+      const means = TLX_FIELDS.map((f) => mean(bucket[f.key] || []) ?? 0);
+      const cis = TLX_FIELDS.map((f) => {
+        const vals = bucket[f.key] || [];
+        const sd = stdev(vals) ?? 0;
+        return vals.length > 1 ? (CI_Z * sd) / Math.sqrt(vals.length) : 0;
+      });
       return {
-        nUsed,
-        excluded,
-        recommendation: "Not enough data",
-        anova: null,
-        friedman: null,
-        posthocParamOmitted: expectedPairs,
-        posthocNonParamOmitted: expectedPairs,
-        insufficientVariation: true,
-        insufficientSample: true,
+        type: "bar",
+        name: layoutId,
+        x: TLX_FIELDS.map((f) => f.label),
+        y: means,
+        marker: { color: colorMap.get(layoutId) },
+        error_y: { type: "data", array: cis, visible: true },
       };
-    }
-    if (!window.jStat) {
-      return {
-        nUsed,
-        excluded,
-        recommendation: "Stats unavailable (jStat not loaded)",
-        anova: null,
-        friedman: null,
-        posthocParam: [],
-        posthocNonParam: [],
-        posthocParamOmitted: 0,
-        posthocNonParamOmitted: 0,
-        insufficientVariation: true,
-        insufficientSample: true,
-      };
-    }
-    const anova = rmAnova(matrix);
-    const friedman = friedmanTest(matrix);
-    const posthocParam = pairedTTests(matrix, layouts);
-    const posthocNonParam = wilcoxonTests(matrix, layouts);
-    const flattened = matrix.flat();
-    const { skew, kurtosis } = computeSkewKurtosis(flattened);
-    const varianceValue = variance(flattened);
-    const insufficientVariation = !varianceValue || varianceValue === 0;
-    const insufficientSample = nUsed < 8;
-    const recommendParametric =
-      !insufficientVariation &&
-      !insufficientSample &&
-      Math.abs(skew ?? 0) < 1 &&
-      Math.abs(kurtosis ?? 0) < 1;
-    const recommendation = insufficientVariation
-      ? "Insufficient variation to recommend parametric tests"
-      : insufficientSample
-        ? "Sample size too small for a reliable recommendation"
-        : recommendParametric
-          ? "Parametric recommended (RM-ANOVA + paired t-tests)"
-          : "Non-parametric recommended (Friedman + Wilcoxon)";
-    return {
-      anova,
-      friedman,
-      posthocParam,
-      posthocNonParam,
-      recommendation,
-      nUsed,
-      excluded,
-      posthocParamOmitted: Math.max(0, expectedPairs - posthocParam.length),
-      posthocNonParamOmitted: Math.max(0, expectedPairs - posthocNonParam.length),
-      insufficientVariation,
-      insufficientSample,
+    });
+    const layout = {
+      ...plotlyLayoutBase("Subscale means by layout"),
+      barmode: "group",
+      yaxis: {
+        ...plotlyLayoutBase("").yaxis,
+        range: [0, 105],
+        title: { text: "Score (0-100)" },
+      },
     };
+    Plotly.react(el, traces, layout);
+  }
+
+  function renderTlxAnalysis(analysis, statusEl) {
+    const section = $("tlxSection");
+
+    // If no TLX data, hide section entirely
+    if (!analysis.tlxParticipantMeans || analysis.tlxParticipantMeans.size === 0) {
+      section.style.display = "none";
+      return;
+    }
+    section.style.display = "block";
+
+    const layouts = analysis.layouts;
+    const k = layouts.length;
+
+    // ── 4a: Assumption checks for Overall TLX ──────────────────────────────
+    const { participants: tlxParticipants, matrix: tlxMatrix } = getTlxCompleteCaseMatrix(
+      "tlxOverall",
+      analysis.tlxParticipantMeans,
+      layouts
+    );
+
+    const verdictEl = $("tlxAssumptionVerdict");
+    const shapiroEl = $("tlxShapiroResults");
+    const mauchlySection = $("tlxMauchlySection");
+    const mauchlyEl = $("tlxMauchlyResults");
+
+    if (tlxParticipants.length < 3) {
+      verdictEl.innerHTML = `<div class="badgeWarn" style="padding: 10px; font-size: 1.1em;">Not enough participants with complete TLX data (${tlxParticipants.length}). Need at least 3.</div>`;
+      shapiroEl.innerHTML = "";
+      mauchlySection.style.display = "none";
+      $("tlxOmnibus").innerHTML = `<div class="hint">Not enough participants to run inferential tests.</div>`;
+      $("tlxPosthoc").innerHTML = "";
+      renderTlxSubscaleAnalysis(analysis, layouts, statusEl);
+      return;
+    }
+
+    // Shapiro-Wilk on pairwise Overall TLX differences
+    const shapiroResults = [];
+    let allNormal = true;
+    for (let a = 0; a < k; a++) {
+      for (let b = a + 1; b < k; b++) {
+        const diffs = tlxMatrix.map((row) => row[a] - row[b]);
+        const sw = shapiroWilk(diffs);
+        const pass = sw && sw.p > 0.05;
+        if (!pass) allNormal = false;
+        shapiroResults.push({
+          pairLabel: `${layouts[a]} vs ${layouts[b]}`,
+          W: sw ? sw.W : null,
+          p: sw ? sw.p : null,
+          pass,
+        });
+      }
+    }
+
+    const useParametric = allNormal;
+
+    // Render Shapiro-Wilk table
+    let shapiroHtml = `<table class="table tableDense">
+      <thead><tr><th>Pair (difference)</th><th>W</th><th>p</th><th>Verdict</th></tr></thead><tbody>`;
+    shapiroResults.forEach((row) => {
+      const verdictClass = row.pass ? "badgeOk" : "badgeWarn";
+      const verdictText = row.pass ? "Normal (p > 0.05)" : "Non-normal (p \u2264 0.05)";
+      shapiroHtml += `<tr>
+        <td>${row.pairLabel}</td>
+        <td>${formatNumber(row.W, 4)}</td>
+        <td>${formatNumber(row.p, 4)}</td>
+        <td><span class="${verdictClass}">${verdictText}</span></td>
+      </tr>`;
+    });
+    shapiroHtml += "</tbody></table>";
+    shapiroEl.innerHTML = shapiroHtml;
+
+    // Mauchly's test (only if parametric and k >= 3)
+    let sphericityOk = true;
+    let ggEpsilon = 1;
+
+    if (useParametric && k >= 3) {
+      mauchlySection.style.display = "block";
+      const mauchlyResult = mauchlyTest(tlxMatrix);
+      if (mauchlyResult) {
+        sphericityOk = mauchlyResult.p > 0.05;
+        ggEpsilon = mauchlyResult.epsilon;
+        const sphClass = sphericityOk ? "badgeOk" : "badgeWarn";
+        const sphText = sphericityOk
+          ? "Sphericity holds (p > 0.05)"
+          : `Sphericity violated (p \u2264 0.05) \u2014 GG \u03B5 = ${formatNumber(ggEpsilon, 3)}`;
+        mauchlyEl.innerHTML = `<table class="table tableDense">
+          <thead><tr><th>W</th><th>&chi;&sup2;</th><th>df</th><th>p</th><th>GG &epsilon;</th><th>Verdict</th></tr></thead>
+          <tbody><tr>
+            <td>${formatNumber(mauchlyResult.W, 4)}</td>
+            <td>${formatNumber(mauchlyResult.chi2, 3)}</td>
+            <td>${mauchlyResult.df}</td>
+            <td>${formatNumber(mauchlyResult.p, 4)}</td>
+            <td>${formatNumber(mauchlyResult.epsilon, 3)}</td>
+            <td><span class="${sphClass}">${sphText}</span></td>
+          </tr></tbody>
+        </table>`;
+      } else {
+        mauchlyEl.innerHTML = `<div class="hint">Could not compute Mauchly's test.</div>`;
+      }
+    } else if (useParametric && k < 3) {
+      mauchlySection.style.display = "none";
+    } else {
+      mauchlySection.style.display = "block";
+      mauchlyEl.innerHTML = `<div class="hint">Skipped \u2014 non-parametric path selected (Shapiro-Wilk rejected normality).</div>`;
+    }
+
+    // Verdict banner
+    let verdictLabel, verdictDetail;
+    if (useParametric && sphericityOk) {
+      verdictLabel = "Parametric path";
+      verdictDetail = "Normality holds. Sphericity holds. Using RM-ANOVA (uncorrected) + paired t-tests with Holm correction.";
+    } else if (useParametric && !sphericityOk) {
+      verdictLabel = "Parametric path (GG-corrected)";
+      verdictDetail = `Normality holds. Sphericity violated. Using RM-ANOVA with Greenhouse-Geisser correction (\u03B5 = ${formatNumber(ggEpsilon, 3)}) + paired t-tests with Holm correction.`;
+    } else {
+      verdictLabel = "Non-parametric path";
+      verdictDetail = "Normality violated. Using Friedman test + Wilcoxon signed-rank with Holm correction.";
+    }
+    verdictEl.innerHTML = `
+      <div class="${useParametric ? "badgeOk" : "badgeWarn"}" style="padding: 10px 16px; font-size: 1.1em; display: inline-block; margin-bottom: 8px;">${verdictLabel}</div>
+      <div class="hint">${verdictDetail}</div>
+    `;
+
+    // ── 4b: Overall TLX omnibus + post-hoc ──────────────────────────────────
+    const omnibusEl = $("tlxOmnibus");
+    const posthocEl = $("tlxPosthoc");
+    const n = tlxMatrix.length;
+
+    let omnibusHtml = "";
+    if (useParametric) {
+      const anova = rmAnova(tlxMatrix);
+      if (anova) {
+        let df1 = anova.df1;
+        let df2 = anova.df2;
+        let pValue = anova.p;
+        let correctionNote = "";
+        if (!sphericityOk) {
+          df1 = anova.df1 * ggEpsilon;
+          df2 = anova.df2 * ggEpsilon;
+          pValue = window.jStat ? 1 - jStat.centralF.cdf(anova.F, df1, df2) : anova.p;
+          correctionNote = ` (Greenhouse-Geisser corrected, \u03B5 = ${formatNumber(ggEpsilon, 3)})`;
+        }
+        const sig = pValue < 0.05;
+        omnibusHtml = `
+          <div class="studyTitle">Repeated-measures ANOVA${correctionNote}</div>
+          <table class="table tableDense" style="margin-top: 6px">
+            <thead><tr><th>F</th><th>df1</th><th>df2</th><th>p</th><th>&eta;&sup2;<sub>p</sub></th><th>Result</th></tr></thead>
+            <tbody><tr>
+              <td>${formatNumber(anova.F, 3)}</td>
+              <td>${formatNumber(df1, 2)}</td>
+              <td>${formatNumber(df2, 2)}</td>
+              <td>${formatNumber(pValue, 4)}</td>
+              <td>${formatNumber(anova.eta, 3)}</td>
+              <td><span class="${sig ? "badgeOk" : "badgeWarn"}">${sig ? "Significant" : "Not significant"} (p ${sig ? "<" : ">"} 0.05)</span></td>
+            </tr></tbody>
+          </table>
+          <div class="hint" style="margin-top: 4px">n = ${n} participants (complete TLX cases across all ${k} layouts).</div>
+        `;
+      } else {
+        omnibusHtml = `<div class="hint">Could not compute RM-ANOVA.</div>`;
+      }
+    } else {
+      const friedman = friedmanTest(tlxMatrix);
+      if (friedman) {
+        const sig = friedman.p < 0.05;
+        omnibusHtml = `
+          <div class="studyTitle">Friedman test</div>
+          <table class="table tableDense" style="margin-top: 6px">
+            <thead><tr><th>&chi;&sup2;</th><th>df</th><th>p</th><th>Kendall's W</th><th>Result</th></tr></thead>
+            <tbody><tr>
+              <td>${formatNumber(friedman.chi2, 3)}</td>
+              <td>${friedman.df}</td>
+              <td>${formatNumber(friedman.p, 4)}</td>
+              <td>${formatNumber(friedman.w, 3)}</td>
+              <td><span class="${sig ? "badgeOk" : "badgeWarn"}">${sig ? "Significant" : "Not significant"} (p ${sig ? "<" : ">"} 0.05)</span></td>
+            </tr></tbody>
+          </table>
+          <div class="hint" style="margin-top: 4px">n = ${n} participants (complete TLX cases across all ${k} layouts).</div>
+        `;
+      } else {
+        omnibusHtml = `<div class="hint">Could not compute Friedman test.</div>`;
+      }
+    }
+    omnibusEl.innerHTML = omnibusHtml;
+
+    // Post-hoc
+    let posthocRows;
+    let posthocLabel;
+    if (useParametric) {
+      posthocRows = pairedTTests(tlxMatrix, layouts);
+      posthocLabel = "Paired t-tests with Holm correction";
+    } else {
+      posthocRows = wilcoxonTests(tlxMatrix, layouts);
+      posthocLabel = "Wilcoxon signed-rank with Holm correction";
+    }
+
+    if (posthocRows && posthocRows.length) {
+      let posthocHtml = `<div class="hint" style="margin-bottom: 6px">${posthocLabel}</div>`;
+      posthocHtml += `<table class="table tableDense">
+        <thead><tr><th>Pair</th><th>${useParametric ? "t" : "Z"}</th><th>p (raw)</th><th>p (adjusted)</th><th>Cohen's d</th><th>Result</th></tr></thead><tbody>`;
+      posthocRows.forEach((row) => {
+        const sig = row.pAdj < 0.05;
+        const statValue = useParametric ? row.t : row.z;
+        posthocHtml += `<tr>
+          <td>${row.pair}</td>
+          <td>${formatNumber(statValue, 3)}</td>
+          <td>${formatNumber(row.p, 4)}</td>
+          <td>${formatNumber(row.pAdj, 4)}</td>
+          <td>${formatNumber(row.effect, 3)}</td>
+          <td><span class="${sig ? "badgeOk" : "badgeWarn"}">${sig ? "Significant" : "Not significant"}</span></td>
+        </tr>`;
+      });
+      posthocHtml += "</tbody></table>";
+      posthocEl.innerHTML = posthocHtml;
+    } else {
+      posthocEl.innerHTML = `<div class="hint">No post-hoc comparisons available.</div>`;
+    }
+
+    // Overall TLX charts
+    let canPlot = true;
+    if (statusEl) canPlot = ensureLibraries(statusEl);
+    if (canPlot) {
+      const colorMap = createLayoutColorMap(layouts);
+      plotDistribution("tlxOverall", layouts, analysis.tlxPerLayoutMeans, colorMap);
+      plotMeanCi("tlxOverall", layouts, analysis.tlxPerLayoutMeans, colorMap);
+      plotPaired("tlxOverall", layouts, tlxMatrix, tlxParticipants, colorMap);
+    }
+
+    // ── 4c: Subscale analysis ───────────────────────────────────────────────
+    renderTlxSubscaleAnalysis(analysis, layouts, statusEl);
+  }
+
+  function renderTlxSubscaleAnalysis(analysis, layouts, statusEl) {
+    const summaryEl = $("tlxSubscaleSummary");
+    const testsEl = $("tlxSubscaleTests");
+    const k = layouts.length;
+
+    if (!analysis.tlxParticipantMeans || analysis.tlxParticipantMeans.size === 0) {
+      summaryEl.innerHTML = "";
+      testsEl.innerHTML = "";
+      return;
+    }
+
+    // Descriptive summary table
+    let summaryHtml = `<table class="table tableDense" style="margin-top: 10px">
+      <thead><tr><th>Subscale</th>`;
+    layouts.forEach((id) => { summaryHtml += `<th>${id} (M \u00B1 SD)</th>`; });
+    summaryHtml += `</tr></thead><tbody>`;
+
+    TLX_FIELDS.forEach((field) => {
+      summaryHtml += `<tr><td>${field.label}</td>`;
+      layouts.forEach((layoutId) => {
+        const bucket = analysis.tlxPerLayoutMeans.get(layoutId);
+        const vals = bucket ? bucket[field.key] || [] : [];
+        const m = mean(vals) ?? 0;
+        const sd = stdev(vals) ?? 0;
+        summaryHtml += `<td>${formatNumber(m, 1)} \u00B1 ${formatNumber(sd, 1)}</td>`;
+      });
+      summaryHtml += `</tr>`;
+    });
+    summaryHtml += `</tbody></table>`;
+    summaryEl.innerHTML = summaryHtml;
+
+    // Friedman + Wilcoxon for each subscale
+    let testsHtml = `<div style="margin-top: 16px">`;
+
+    TLX_FIELDS.forEach((field) => {
+      const { participants, matrix } = getTlxCompleteCaseMatrix(field.key, analysis.tlxParticipantMeans, layouts);
+      const n = participants.length;
+
+      testsHtml += `<div class="studyTitle" style="margin-top: 14px">${field.label}</div>`;
+
+      if (n < 3) {
+        testsHtml += `<div class="hint">Not enough complete cases (${n}) for ${field.label}.</div>`;
+        return;
+      }
+
+      // Friedman omnibus
+    const friedman = friedmanTest(matrix);
+      if (friedman) {
+        const sig = friedman.p < 0.05;
+        testsHtml += `<table class="table tableDense" style="margin-top: 4px">
+          <thead><tr><th>Test</th><th>&chi;&sup2;</th><th>df</th><th>p</th><th>W</th><th>Result</th></tr></thead>
+          <tbody><tr>
+            <td>Friedman</td>
+            <td>${formatNumber(friedman.chi2, 3)}</td>
+            <td>${friedman.df}</td>
+            <td>${formatNumber(friedman.p, 4)}</td>
+            <td>${formatNumber(friedman.w, 3)}</td>
+            <td><span class="${sig ? "badgeOk" : "badgeWarn"}">${sig ? "Significant" : "Not significant"}</span></td>
+          </tr></tbody>
+        </table>`;
+      } else {
+        testsHtml += `<div class="hint">Could not compute Friedman test.</div>`;
+      }
+
+      // Wilcoxon post-hoc
+      const posthocRows = wilcoxonTests(matrix, layouts);
+      if (posthocRows && posthocRows.length) {
+        testsHtml += `<table class="table tableDense" style="margin-top: 4px">
+          <thead><tr><th>Pair</th><th>Z</th><th>p (raw)</th><th>p (adj)</th><th>Cohen's d</th><th>Result</th></tr></thead><tbody>`;
+        posthocRows.forEach((row) => {
+          const sig = row.pAdj < 0.05;
+          testsHtml += `<tr>
+            <td>${row.pair}</td>
+            <td>${formatNumber(row.z, 3)}</td>
+            <td>${formatNumber(row.p, 4)}</td>
+            <td>${formatNumber(row.pAdj, 4)}</td>
+            <td>${formatNumber(row.effect, 3)}</td>
+            <td><span class="${sig ? "badgeOk" : "badgeWarn"}">${sig ? "Sig." : "n.s."}</span></td>
+          </tr>`;
+        });
+        testsHtml += `</tbody></table>`;
+      }
+
+      testsHtml += `<div class="hint" style="margin-top: 2px">n = ${n} (Wilcoxon signed-rank, Holm correction)</div>`;
+    });
+
+    testsHtml += `</div>`;
+    testsEl.innerHTML = testsHtml;
+
+    // Subscale grouped bar chart
+    let canPlot = true;
+    if (statusEl) canPlot = ensureLibraries(statusEl);
+    if (canPlot) {
+      const colorMap = createLayoutColorMap(layouts);
+      plotTlxSubscales(layouts, analysis.tlxPerLayoutMeans, colorMap);
+    }
   }
 
   function downloadFile(filename, text) {
@@ -2341,38 +2006,28 @@
     const lines = [
       "# Figures list",
       "",
-      "1. Speed–accuracy tradeoff (WPM vs error rate).",
+      "1. WPM distribution (violin/box).",
+      "2. WPM mean ± 95% CI.",
+      "3. WPM paired lines (within-subject).",
+      "",
     ];
-    METRICS.forEach((metric, idx) => {
-      const base = idx * 4 + 2;
-      lines.push(`${base}. ${metric.label} distribution (violin/box).`);
-      lines.push(`${base + 1}. ${metric.label} mean ± 95% CI.`);
-      lines.push(`${base + 2}. ${metric.label} paired lines (within-subject).`);
-      lines.push(`${base + 3}. ${metric.label} learning curve.`);
-    });
-    lines.push("");
     return lines.join("\n");
   }
 
   function buildReportSnippet(analysis) {
-    const primary = analysis.primaryOutcomes;
-    const bestWpm =
-      primary && primary.bestWpm
-        ? `${primary.bestWpm.layoutId} (${primary.bestWpm.mean.toFixed(2)} WPM)`
-        : "n/a";
-    const bestErr =
-      primary && primary.bestErr
-        ? `${primary.bestErr.layoutId} (${primary.bestErr.mean.toFixed(3)})`
-        : "n/a";
+    const layoutWpms = (analysis.summary.layouts || []).map((r) => ({
+      id: r.layoutId,
+      wpm: r.meanWpm,
+    }));
+    const best = layoutWpms.length
+      ? layoutWpms.reduce((a, b) => (b.wpm > a.wpm ? b : a))
+      : null;
+    const bestWpm = best ? `${best.id} (${best.wpm.toFixed(2)} WPM)` : "n/a";
     return `## Study results summary
 
 - Participants: ${analysis.summary.participantCount}
 - Layouts: ${analysis.summary.layoutCount}
-- Baseline: ${primary?.baseline ?? "n/a"}
 - Best WPM: ${bestWpm}
-- Lowest error rate: ${bestErr}
-- WPM test: ${primary?.wpm?.testSummary ?? "n/a"}
-- Error rate test: ${primary?.errorRate?.testSummary ?? "n/a"}
 - Warnings: ${analysis.summary.warnings.length}
 
 Generated by the study analysis tool.
@@ -2398,14 +2053,15 @@ Generated by the study analysis tool.
     const thresholds = { ...FIXED_THRESHOLDS };
     statusEl.textContent = "Fetching participant sheets...";
     try {
-      const { rows: rawRows, warnings: fetchWarnings } = await fetchAllParticipantRows(statusEl);
+      const { rows: rawRows, warnings: fetchWarnings, tlxRows } = await fetchAllParticipantRows(statusEl);
       if (!rawRows.length) {
         statusEl.textContent = "No rows found in participant sheets.";
-        if (fetchWarnings.length) renderWarnings(fetchWarnings);
         return;
       }
       const rows = deriveColumns(rawRows);
       lastRows = rows;
+      const rawTlxRows = Array.isArray(tlxRows) ? tlxRows : [];
+      lastTlxRows = normalizeTlxRows(rawTlxRows, rows);
       lastThresholds = thresholds;
       const participantIds = listParticipants(rows);
       const savedFilter = loadParticipantFilter();
@@ -2413,13 +2069,12 @@ Generated by the study analysis tool.
       saveParticipantFilter(Array.from(selectedSet));
       renderParticipantFilter(participantIds, selectedSet, statusEl);
       const filteredRows = applyParticipantFilter(rows, selectedSet);
-      const analysis = computeAnalysisData(filteredRows, thresholds);
+      const filteredTlxRows = applyParticipantFilter(lastTlxRows, selectedSet);
+      const analysis = computeAnalysisData(filteredRows, thresholds, filteredTlxRows);
       if (fetchWarnings.length) {
         analysis.summary.warnings = mergeWarnings(analysis.summary.warnings || [], fetchWarnings);
       }
-      const payload = { rows, thresholds, updatedAtMs: Date.now(), participantFilter: Array.from(selectedSet) };
-      saveAnalysisState(payload);
-      renderDashboard(analysis, thresholds, statusEl);
+      renderAnalysisFlow(analysis, thresholds, statusEl);
 
       statusEl.textContent = "Analysis updated.";
     } catch (err) {
@@ -2429,73 +2084,34 @@ Generated by the study analysis tool.
 
   function init() {
     const thresholds = { ...FIXED_THRESHOLDS };
-    const stored = loadAnalysisState();
-    if (stored) {
-      if (Array.isArray(stored.rows) && stored.rows.length) {
-        const derivedRows = deriveColumns(stored.rows);
-        lastRows = derivedRows;
-        lastThresholds = thresholds;
-        const participantIds = listParticipants(derivedRows);
-        const savedFilter = loadParticipantFilter() || stored.participantFilter || null;
-        const selectedSet = normalizeParticipantSelection(savedFilter, participantIds);
-        saveParticipantFilter(Array.from(selectedSet));
-        renderParticipantFilter(participantIds, selectedSet, $("analysisStatus"));
-        const filteredRows = applyParticipantFilter(derivedRows, selectedSet);
-        const analysis = computeAnalysisData(filteredRows, thresholds);
-        renderDashboard(analysis, thresholds, $("analysisStatus"));
-      } else if (stored.summary) {
-        renderAnalysisSummary(stored.summary);
-        renderEligibility(stored.summary, thresholds);
-        renderKeyFindings(stored.summary, null);
-        renderWarnings(stored.summary.warnings || []);
-        renderAnalysisTable(stored.summary.layouts || []);
-        renderMetricPanels(stored.layouts || []);
-        renderDataQuality(null);
-        renderPrimaryOutcomes(null);
-        renderTlxSummary(null);
-        renderLearningSummary([]);
-        renderOrderSummary(null);
-        renderSpeedAccuracyStats(null);
-        $("analysisStatus").textContent =
-          "Stored summary loaded. Click Refresh analysis to recompute charts.";
-      }
-    }
-
-    if (!lastRows) {
-      renderParticipantFilter([], new Set(), $("analysisStatus"));
-    }
+    renderParticipantFilter([], new Set(), $("analysisStatus"));
 
     $("analysisFetchBtn").addEventListener("click", fetchAndAnalyze);
     fetchAndAnalyze();
     $("downloadSummaryBtn").addEventListener("click", () => {
-      const state = loadAnalysisState();
-      if (!state) return;
-      const analysis = state.rows ? computeAnalysisData(deriveColumns(state.rows), thresholds) : null;
-      const layouts = analysis ? analysis.summary.layouts : state.summary?.layouts || [];
+      const analysis = getAnalysisForDownload(thresholds, $("analysisStatus"));
+      if (!analysis) return;
+      const layouts = analysis.summary.layouts || [];
       const header =
-        "layoutId,trials,meanWpm,meanEditDistance,meanErrorRate,meanElapsedSeconds,meanBackspaceCount,meanKeypressCount";
+        "layoutId,trials,meanWpm,meanEditDistance,meanErrorRate,meanElapsedSeconds,meanBackspaceCount";
       const lines = layouts.map(
         (r) =>
           `${r.layoutId},${r.trials},${r.meanWpm.toFixed(2)},${r.meanEd.toFixed(2)},${r.meanErr.toFixed(
             3
-          )},${r.meanElapsed.toFixed(2)},${r.meanBackspace.toFixed(2)},${r.meanKeypress.toFixed(2)}`
+          )},${r.meanElapsed.toFixed(2)},${r.meanBackspace.toFixed(2)}`
       );
       downloadFile("analysis_summary.csv", [header, ...lines].join("\n"));
     });
 
     $("downloadReportSnippetBtn").addEventListener("click", () => {
-      const state = loadAnalysisState();
-      if (!state) return;
-      const analysis = state.rows ? computeAnalysisData(deriveColumns(state.rows), thresholds) : null;
+      const analysis = getAnalysisForDownload(thresholds, $("analysisStatus"));
       if (!analysis) return;
       const snippet = buildReportSnippet(analysis);
       downloadFile("report_snippet.md", snippet);
     });
 
     $("downloadResultsTablesBtn").addEventListener("click", () => {
-      const state = loadAnalysisState();
-      if (!state) return;
-      const analysis = state.rows ? computeAnalysisData(deriveColumns(state.rows), thresholds) : null;
+      const analysis = getAnalysisForDownload(thresholds, $("analysisStatus"));
       if (!analysis) return;
       downloadFile("analysis_results_tables.csv", buildResultsTablesCsv(analysis));
     });

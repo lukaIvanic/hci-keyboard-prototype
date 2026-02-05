@@ -86,7 +86,6 @@
             <div id="analysisKeyFindings" class="analysisSummary"></div>
           </div>
         </div>
-        <div class="analysisWarnings" id="analysisWarnings"></div>
         <div class="tableWrap" style="margin-top: 10px">
           <table class="table">
             <thead>
@@ -105,50 +104,102 @@
       </section>
 
       <section class="panel">
-        <h2 class="sectionTitle">Study diagnostics</h2>
-        <p class="hint">Quality checks and report-ready summaries derived from the filtered dataset.</p>
-        <div class="analysisGrid">
-          <div class="analysisCard">
-            <div class="studyTitle">Data quality</div>
-            <div id="analysisDataQuality" class="analysisSummary"></div>
-          </div>
-          <div class="analysisCard">
-            <div class="studyTitle">Primary outcomes</div>
-            <div id="analysisPrimaryOutcomes" class="analysisSummary"></div>
-          </div>
-          <div class="analysisCard">
-            <div class="studyTitle">NASA-TLX summary</div>
-            <div id="analysisTlxSummary" class="analysisSummary"></div>
-          </div>
+        <h2 class="sectionTitle">Step 1 — Data overview</h2>
+        <p class="hint">Filtered dataset summary. Learning and practice trials are excluded.</p>
+        <div id="analysisDataOverview" class="analysisSummary"></div>
+      </section>
+
+      <section class="panel">
+        <h2 class="sectionTitle">Step 2 — Assumption checks</h2>
+        <p class="hint">Normality and sphericity tests determine the statistical path.</p>
+        <div id="assumptionVerdict" class="analysisSummary"></div>
+        <div class="tableWrap" style="margin-top: 10px">
+          <div class="studyTitle">Shapiro-Wilk normality test</div>
+          <p class="hint">Tested on pairwise WPM difference scores (per-participant means). Alpha = 0.05.</p>
+          <div id="shapiroResults"></div>
         </div>
-        <div class="analysisGrid">
-          <div class="analysisCard">
-            <div class="studyTitle">Learning &amp; fatigue</div>
-            <div id="analysisLearningSummary" class="analysisSummary"></div>
-          </div>
-          <div class="analysisCard">
-            <div class="studyTitle">Order &amp; carryover</div>
-            <div id="analysisOrderSummary" class="analysisSummary"></div>
-          </div>
+        <div id="mauchlySection" style="margin-top: 16px">
+          <div class="studyTitle">Mauchly's sphericity test</div>
+          <p class="hint">Only applicable when the parametric path is taken.</p>
+          <div id="mauchlyResults"></div>
         </div>
       </section>
 
       <section class="panel">
-        <h2 class="sectionTitle">Metrics dashboard</h2>
-        <p class="hint">
-          Charts and inferential stats are computed from per-participant averages (practice excluded).
-        </p>
-        <div class="sectionCallout">
-          Secondary detail: full distributions and statistical tables are provided below for inspection.
+        <h2 class="sectionTitle">Step 3 — WPM analysis</h2>
+        <p class="hint">Omnibus test and pairwise comparisons, selected based on assumption checks.</p>
+        <div id="wpmOmnibus" class="analysisSummary"></div>
+        <div class="tableWrap" style="margin-top: 10px">
+          <div class="studyTitle">Post-hoc pairwise comparisons</div>
+          <div id="wpmPosthoc"></div>
         </div>
-        <div class="chartGrid">
-          <div class="chartCard chartCardWide">
-            <div class="studyTitle">Speed–accuracy tradeoff</div>
-            <div id="chartSpeedAccuracy" class="chart"></div>
-            <div id="speedAccuracyStats" class="analysisSummary"></div>
+        <div class="chartGrid" style="margin-top: 16px; grid-template-columns: 1fr">
+          <div class="chartCard">
+            <div class="chartTitle">Distribution</div>
+            <div id="chart-wpm-dist" class="chart"></div>
+          </div>
+          <div class="chartCard">
+            <div class="chartTitle">Mean + 95% CI</div>
+            <div id="chart-wpm-mean" class="chart"></div>
+          </div>
+          <div class="chartCard">
+            <div class="chartTitle">Paired participant lines</div>
+            <div id="chart-wpm-paired" class="chart"></div>
           </div>
         </div>
-        <div id="metricsDashboard" class="metricsDashboard"></div>
+      </section>
+
+      <section class="panel" id="tlxSection" style="display: none">
+        <h2 class="sectionTitle">Step 4 — NASA-TLX analysis</h2>
+        <p class="hint">Subjective workload assessed via Raw TLX (unweighted mean of 6 subscales, 0-100 scale).</p>
+
+        <!-- 4a: Assumption checks for overall TLX -->
+        <div class="studyTitle" style="margin-top: 12px">Overall TLX — assumption checks</div>
+        <div id="tlxAssumptionVerdict" class="analysisSummary"></div>
+        <div class="tableWrap" style="margin-top: 10px">
+          <div class="studyTitle">Shapiro-Wilk normality test</div>
+          <p class="hint">Tested on pairwise Overall TLX difference scores (per-participant). Alpha = 0.05.</p>
+          <div id="tlxShapiroResults"></div>
+        </div>
+        <div id="tlxMauchlySection" style="margin-top: 16px">
+          <div class="studyTitle">Mauchly's sphericity test</div>
+          <p class="hint">Only applicable when the parametric path is taken.</p>
+          <div id="tlxMauchlyResults"></div>
+        </div>
+
+        <!-- 4b: Overall TLX omnibus + posthoc -->
+        <div class="studyTitle" style="margin-top: 20px">Overall TLX — omnibus test</div>
+        <div id="tlxOmnibus" class="analysisSummary"></div>
+        <div class="tableWrap" style="margin-top: 10px">
+          <div class="studyTitle">Post-hoc pairwise comparisons</div>
+          <div id="tlxPosthoc"></div>
+        </div>
+        <div class="chartGrid" style="margin-top: 16px; grid-template-columns: 1fr">
+          <div class="chartCard">
+            <div class="chartTitle">Overall TLX — Distribution</div>
+            <div id="chart-tlxOverall-dist" class="chart"></div>
+          </div>
+          <div class="chartCard">
+            <div class="chartTitle">Overall TLX — Mean + 95% CI</div>
+            <div id="chart-tlxOverall-mean" class="chart"></div>
+          </div>
+          <div class="chartCard">
+            <div class="chartTitle">Overall TLX — Paired participant lines</div>
+            <div id="chart-tlxOverall-paired" class="chart"></div>
+          </div>
+        </div>
+
+        <!-- 4c: Per-subscale analysis -->
+        <div class="studyTitle" style="margin-top: 24px">Subscale analysis</div>
+        <p class="hint">Non-parametric tests (Friedman + Wilcoxon with Holm correction) for each subscale, since the 21-point ordinal scale makes normality assumptions questionable.</p>
+        <div id="tlxSubscaleSummary"></div>
+        <div id="tlxSubscaleTests"></div>
+        <div class="chartGrid" style="margin-top: 16px; grid-template-columns: 1fr">
+          <div class="chartCard">
+            <div class="chartTitle">Subscale means by layout</div>
+            <div id="chart-tlx-subscales" class="chart"></div>
+          </div>
+        </div>
       </section>
     </main>
   </body>

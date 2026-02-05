@@ -627,19 +627,13 @@
     }
     const payload = buildTlxSheetPayload(values);
     try {
-      const res = await fetch(url, {
+      await fetch(url, {
         method: "POST",
+        mode: "no-cors",
         headers: { "Content-Type": "text/plain;charset=utf-8" },
         body: JSON.stringify(payload),
       });
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
-      }
-      const data = await res.json().catch(() => ({}));
-      if (data && data.ok) {
-        return true;
-      }
-      return false;
+      return true;
     } catch (err) {
       return false;
     }
