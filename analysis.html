@@ -104,6 +104,27 @@
       </section>
 
       <section class="panel">
+        <h2 class="sectionTitle">Descriptive summary table</h2>
+        <p class="hint">Means, standard deviations, and 95% confidence intervals by layout.</p>
+        <div class="tableWrap" style="margin-top: 10px">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Layout</th>
+                <th>n</th>
+                <th>WPM</th>
+                <th>Error rate</th>
+                <th>Backspace count</th>
+                <th>Edit distance</th>
+                <th>Elapsed (s)</th>
+              </tr>
+            </thead>
+            <tbody id="analysisDescriptiveSummaryBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
         <h2 class="sectionTitle">Step 1 — Data overview</h2>
         <p class="hint">Filtered dataset summary. Learning and practice trials are excluded.</p>
         <div id="analysisDataOverview" class="analysisSummary"></div>
@@ -133,6 +154,25 @@
           <div class="studyTitle">Post-hoc pairwise comparisons</div>
           <div id="wpmPosthoc"></div>
         </div>
+        <div class="tableWrap" style="margin-top: 10px">
+          <div class="studyTitle">Descriptive statistics</div>
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Layout</th>
+                <th>n</th>
+                <th>Mean (WPM)</th>
+                <th>Std. Dev.</th>
+                <th>Minimum</th>
+                <th>25%</th>
+                <th>50%</th>
+                <th>75%</th>
+                <th>Maximum</th>
+              </tr>
+            </thead>
+            <tbody id="wpmDescriptiveTableBody"></tbody>
+          </table>
+        </div>
         <div class="chartGrid" style="margin-top: 16px; grid-template-columns: 1fr">
           <div class="chartCard">
             <div class="chartTitle">Distribution</div>
@@ -146,11 +186,87 @@
             <div class="chartTitle">Paired participant lines</div>
             <div id="chart-wpm-paired" class="chart"></div>
           </div>
+          <div class="chartCard">
+            <div class="chartTitle">Post-hoc mean differences</div>
+            <div id="chart-wpm-posthoc" class="chart"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2 class="sectionTitle">Step 4 — Backspace count analysis</h2>
+        <p class="hint">Omnibus test and pairwise comparisons, selected based on assumption checks.</p>
+        <div class="tableWrap" style="margin-top: 10px">
+          <div class="studyTitle">Assumption checks</div>
+          <div id="backspaceAssumptionVerdict" class="analysisSummary"></div>
+          <div class="studyTitle" style="margin-top: 10px">Shapiro-Wilk normality test</div>
+          <p class="hint">Tested on pairwise backspace difference scores (per-participant means). Alpha = 0.05.</p>
+          <div id="backspaceShapiroResults"></div>
+          <div id="backspaceMauchlySection" style="margin-top: 10px">
+            <div class="studyTitle">Mauchly's sphericity test</div>
+            <p class="hint">Only applicable when the parametric path is taken.</p>
+            <div id="backspaceMauchlyResults"></div>
+          </div>
+        </div>
+        <div id="backspaceOmnibus" class="analysisSummary"></div>
+        <div class="tableWrap" style="margin-top: 10px">
+          <div class="studyTitle">Post-hoc pairwise comparisons</div>
+          <div id="backspacePosthoc"></div>
+        </div>
+        <div class="chartGrid" style="margin-top: 16px; grid-template-columns: 1fr">
+          <div class="chartCard">
+            <div class="chartTitle">Distribution</div>
+            <div id="chart-backspaceCount-dist" class="chart"></div>
+          </div>
+          <div class="chartCard">
+            <div class="chartTitle">Mean + 95% CI</div>
+            <div id="chart-backspaceCount-mean" class="chart"></div>
+          </div>
+          <div class="chartCard">
+            <div class="chartTitle">Paired participant lines</div>
+            <div id="chart-backspaceCount-paired" class="chart"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2 class="sectionTitle">Step 5 — Error rate analysis</h2>
+        <p class="hint">Omnibus test and pairwise comparisons, selected based on assumption checks.</p>
+        <div class="tableWrap" style="margin-top: 10px">
+          <div class="studyTitle">Assumption checks</div>
+          <div id="errorRateAssumptionVerdict" class="analysisSummary"></div>
+          <div class="studyTitle" style="margin-top: 10px">Shapiro-Wilk normality test</div>
+          <p class="hint">Tested on pairwise error rate difference scores (per-participant means). Alpha = 0.05.</p>
+          <div id="errorRateShapiroResults"></div>
+          <div id="errorRateMauchlySection" style="margin-top: 10px">
+            <div class="studyTitle">Mauchly's sphericity test</div>
+            <p class="hint">Only applicable when the parametric path is taken.</p>
+            <div id="errorRateMauchlyResults"></div>
+          </div>
+        </div>
+        <div id="errorRateOmnibus" class="analysisSummary"></div>
+        <div class="tableWrap" style="margin-top: 10px">
+          <div class="studyTitle">Post-hoc pairwise comparisons</div>
+          <div id="errorRatePosthoc"></div>
+        </div>
+        <div class="chartGrid" style="margin-top: 16px; grid-template-columns: 1fr">
+          <div class="chartCard">
+            <div class="chartTitle">Distribution</div>
+            <div id="chart-errorRate-dist" class="chart"></div>
+          </div>
+          <div class="chartCard">
+            <div class="chartTitle">Mean + 95% CI</div>
+            <div id="chart-errorRate-mean" class="chart"></div>
+          </div>
+          <div class="chartCard">
+            <div class="chartTitle">Paired participant lines</div>
+            <div id="chart-errorRate-paired" class="chart"></div>
+          </div>
         </div>
       </section>
 
       <section class="panel" id="tlxSection" style="display: none">
-        <h2 class="sectionTitle">Step 4 — NASA-TLX analysis</h2>
+        <h2 class="sectionTitle">Step 6 — NASA-TLX analysis</h2>
         <p class="hint">Subjective workload assessed via Raw TLX (unweighted mean of 6 subscales, 0-100 scale).</p>
 
         <!-- 4a: Assumption checks for overall TLX -->

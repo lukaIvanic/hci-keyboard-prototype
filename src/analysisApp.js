@@ -283,6 +283,19 @@
     return arr.reduce((a, b) => a + b, 0) / arr.length;
   }
 
+  function quantileSorted(sorted, p) {
+    const n = sorted.length;
+    if (!n) return null;
+    if (n === 1) return sorted[0];
+    const clamped = Math.min(1, Math.max(0, p));
+    const idx = (n - 1) * clamped;
+    const lo = Math.floor(idx);
+    const hi = Math.ceil(idx);
+    if (lo === hi) return sorted[lo];
+    const h = idx - lo;
+    return sorted[lo] + (sorted[hi] - sorted[lo]) * h;
+  }
+
   function variance(arr) {
     if (arr.length < 2) return null;
     const m = mean(arr);
@@ -1312,6 +1325,72 @@
     Plotly.react(el, traces, plotlyLayoutBase("Paired lines"));
   }
 
+  function plotPosthocDifferences(metricKey, layouts, matrix, posthocRows) {
+    const el = document.getElementById(`chart-${metricKey}-posthoc`);
+    if (!el) return;
+    if (!posthocRows || !posthocRows.length) {
+      el.innerHTML = `<div class="hint">No post-hoc comparisons available.</div>`;
+      return;
+    }
+
+    const pairs = [];
+    const means = [];
+    const cis = [];
+    const pAdjTexts = [];
+
+    posthocRows.forEach((row) => {
+      const pairLabel = row.pair || "";
+      const splitIdx = pairLabel.lastIndexOf(" vs ");
+      if (splitIdx === -1) return;
+      const aLabel = pairLabel.slice(0, splitIdx);
+      const bLabel = pairLabel.slice(splitIdx + 4);
+      const aIdx = layouts.indexOf(aLabel);
+      const bIdx = layouts.indexOf(bLabel);
+      if (aIdx === -1 || bIdx === -1) return;
+
+      const diffs = matrix.map((r) => r[aIdx] - r[bIdx]).filter((v) => Number.isFinite(v));
+      if (!diffs.length) return;
+      const stats = meanAndCi(diffs);
+      if (!Number.isFinite(stats.mean) || !Number.isFinite(stats.ci)) return;
+
+      pairs.push(pairLabel);
+      means.push(stats.mean);
+      cis.push(stats.ci);
+      pAdjTexts.push(Number.isFinite(row.pAdj) ? row.pAdj.toFixed(4) : "n/a");
+    });
+
+    if (!pairs.length) {
+      el.innerHTML = `<div class="hint">No post-hoc comparisons available.</div>`;
+      return;
+    }
+
+    const trace = {
+      type: "scatter",
+      mode: "markers",
+      x: means,
+      y: pairs,
+      marker: { color: "#6aa6ff", size: 8 },
+      error_x: { type: "data", array: cis, visible: true },
+      text: pAdjTexts,
+      customdata: cis,
+      hovertemplate:
+        "Pair: %{y}<br>Mean diff: %{x:.3f}<br>95% CI: ±%{customdata:.3f}<br>p_adj: %{text}<extra></extra>",
+    };
+
+    const layout = {
+      ...plotlyLayoutBase("Post-hoc mean differences"),
+      xaxis: {
+        ...plotlyLayoutBase("").xaxis,
+        zeroline: true,
+        zerolinecolor: "#bbb",
+        title: { text: "Mean difference (A - B)" },
+      },
+      yaxis: { ...plotlyLayoutBase("").yaxis, automargin: true },
+    };
+
+    Plotly.react(el, [trace], layout);
+  }
+
   // ── New analysis flow ───────────────────────────────────────────────────────
   function renderAnalysisFlow(analysis, thresholds, statusEl) {
     // Keep the top-level summary table and cards working
@@ -1364,7 +1443,11 @@
       shapiroEl.innerHTML = "";
       mauchlySection.style.display = "none";
       renderWpmAnalysisInsufficient(wpmParticipants.length);
+      renderWpmDescriptiveTable(analysis);
+      renderBackspaceAnalysis(analysis, statusEl);
+      renderErrorRateAnalysis(analysis, statusEl);
       renderTlxAnalysis(analysis, statusEl);
+      renderDescriptiveSummaryTable(analysis);
       return;
     }
 
@@ -1461,14 +1544,63 @@
     // ── Step 3: WPM analysis ────────────────────────────────────────────────
     renderWpmAnalysis(analysis, wpmMatrix, wpmParticipants, useParametric, sphericityOk, ggEpsilon, statusEl);
 
-    // ── Step 4: NASA-TLX analysis ───────────────────────────────────────────
+    // ── Step 4: Backspace count analysis ────────────────────────────────────
+    renderBackspaceAnalysis(analysis, statusEl);
+
+    // ── Step 5: Error rate analysis ─────────────────────────────────────────
+    renderErrorRateAnalysis(analysis, statusEl);
+
+    // ── Step 6: NASA-TLX analysis ───────────────────────────────────────────
     renderTlxAnalysis(analysis, statusEl);
+
+    // ── Step 7: Descriptive summary table ───────────────────────────────────
+    renderDescriptiveSummaryTable(analysis);
   }
 
   function renderWpmAnalysisInsufficient(n) {
     const omnibusEl = $("wpmOmnibus");
     omnibusEl.innerHTML = `<div class="hint">Not enough complete-case participants (${n}) to run inferential tests.</div>`;
     $("wpmPosthoc").innerHTML = "";
+  }
+
+  function renderWpmDescriptiveTable(analysis) {
+    const tbody = $("wpmDescriptiveTableBody");
+    const decimals = METRICS.find((metric) => metric.key === "wpm")?.decimals ?? 2;
+    const fmt = (value) => formatNumber(value, decimals);
+
+    const rows = analysis.layouts
+      .map((layoutId) => {
+        const metrics = analysis.perLayoutParticipantMeans.get(layoutId) || {};
+        const values = (metrics.wpm || []).filter((v) => Number.isFinite(v));
+        const n = values.length;
+        if (!n) {
+          return `<tr><td>${layoutId}</td><td>0</td><td colspan="7">n/a</td></tr>`;
+        }
+
+        const sorted = values.slice().sort((a, b) => a - b);
+        const m = mean(sorted);
+        const sd = stdev(sorted);
+        const minVal = sorted[0];
+        const maxVal = sorted[sorted.length - 1];
+        const q1 = quantileSorted(sorted, 0.25);
+        const median = quantileSorted(sorted, 0.5);
+        const q3 = quantileSorted(sorted, 0.75);
+
+        return `<tr>
+          <td>${layoutId}</td>
+          <td>${n}</td>
+          <td>${fmt(m)}</td>
+          <td>${fmt(sd)}</td>
+          <td>${fmt(minVal)}</td>
+          <td>${fmt(q1)}</td>
+          <td>${fmt(median)}</td>
+          <td>${fmt(q3)}</td>
+          <td>${fmt(maxVal)}</td>
+        </tr>`;
+      })
+      .join("");
+
+    tbody.innerHTML = rows || `<tr><td colspan="9" class="hint">No WPM data available.</td></tr>`;
   }
 
   function renderWpmAnalysis(analysis, wpmMatrix, wpmParticipants, useParametric, sphericityOk, ggEpsilon, statusEl) {
@@ -1579,6 +1711,8 @@
       posthocEl.innerHTML = `<div class="hint">No post-hoc comparisons available.</div>`;
     }
 
+    renderWpmDescriptiveTable(analysis);
+
     // ── Charts ──
     let canPlot = true;
     if (statusEl) canPlot = ensureLibraries(statusEl);
@@ -1588,7 +1722,494 @@
       plotDistribution("wpm", analysis.layouts, analysis.perLayoutParticipantMeans, colorMap);
       plotMeanCi("wpm", analysis.layouts, analysis.perLayoutParticipantMeans, colorMap);
       plotPaired("wpm", analysis.layouts, wpmMatrix, wpmParticipants, colorMap);
+      plotPosthocDifferences("wpm", analysis.layouts, wpmMatrix, posthocRows);
     }
+  }
+
+  function renderBackspaceAnalysis(analysis, statusEl) {
+    const layouts = analysis.layouts;
+    const { participants: backspaceParticipants, matrix: backspaceMatrix } = getCompleteCaseMatrix(
+      "backspaceCount",
+      analysis.participantMeans,
+      layouts
+    );
+    const k = layouts.length;
+
+    const verdictEl = $("backspaceAssumptionVerdict");
+    const shapiroEl = $("backspaceShapiroResults");
+    const mauchlySection = $("backspaceMauchlySection");
+    const mauchlyEl = $("backspaceMauchlyResults");
+    const omnibusEl = $("backspaceOmnibus");
+    const posthocEl = $("backspacePosthoc");
+
+    if (backspaceParticipants.length < 3) {
+      verdictEl.innerHTML = `<div class="badgeWarn" style="padding: 10px; font-size: 1.1em;">Not enough complete-case participants (${backspaceParticipants.length}) to run assumption checks. Need at least 3.</div>`;
+      shapiroEl.innerHTML = "";
+      mauchlySection.style.display = "none";
+      omnibusEl.innerHTML = `<div class="hint">Not enough complete-case participants to run inferential tests.</div>`;
+      posthocEl.innerHTML = "";
+      return;
+    }
+
+    // Shapiro-Wilk on pairwise backspace differences
+    const shapiroResults = [];
+    let allNormal = true;
+    for (let a = 0; a < k; a++) {
+      for (let b = a + 1; b < k; b++) {
+        const diffs = backspaceMatrix.map((row) => row[a] - row[b]);
+        const sw = shapiroWilk(diffs);
+        const pass = sw && sw.p > 0.05;
+        if (!pass) allNormal = false;
+        shapiroResults.push({
+          pairLabel: `${layouts[a]} vs ${layouts[b]}`,
+          W: sw ? sw.W : null,
+          p: sw ? sw.p : null,
+          pass,
+        });
+      }
+    }
+
+    const useParametric = allNormal;
+
+    // Render Shapiro-Wilk table
+    let shapiroHtml = `<table class="table tableDense">
+      <thead><tr><th>Pair (difference)</th><th>W</th><th>p</th><th>Verdict</th></tr></thead><tbody>`;
+    shapiroResults.forEach((row) => {
+      const verdictClass = row.pass ? "badgeOk" : "badgeWarn";
+      const verdictText = row.pass ? "Normal (p > 0.05)" : "Non-normal (p <= 0.05)";
+      shapiroHtml += `<tr>
+        <td>${row.pairLabel}</td>
+        <td>${formatNumber(row.W, 4)}</td>
+        <td>${formatNumber(row.p, 4)}</td>
+        <td><span class="${verdictClass}">${verdictText}</span></td>
+      </tr>`;
+    });
+    shapiroHtml += "</tbody></table>";
+    shapiroEl.innerHTML = shapiroHtml;
+
+    // Mauchly's test (only if parametric path and k >= 3)
+    let sphericityOk = true;
+    let ggEpsilon = 1;
+    let mauchlyResult = null;
+
+    if (useParametric && k >= 3) {
+      mauchlySection.style.display = "block";
+      mauchlyResult = mauchlyTest(backspaceMatrix);
+      if (mauchlyResult) {
+        sphericityOk = mauchlyResult.p > 0.05;
+        ggEpsilon = mauchlyResult.epsilon;
+        const sphVerdictClass = sphericityOk ? "badgeOk" : "badgeWarn";
+        const sphVerdictText = sphericityOk
+          ? "Sphericity holds (p > 0.05)"
+          : `Sphericity violated (p <= 0.05) — GG epsilon = ${formatNumber(ggEpsilon, 3)}`;
+        mauchlyEl.innerHTML = `<table class="table tableDense">
+          <thead><tr><th>W</th><th>&chi;&sup2;</th><th>df</th><th>p</th><th>GG &epsilon;</th><th>Verdict</th></tr></thead>
+          <tbody><tr>
+            <td>${formatNumber(mauchlyResult.W, 4)}</td>
+            <td>${formatNumber(mauchlyResult.chi2, 3)}</td>
+            <td>${mauchlyResult.df}</td>
+            <td>${formatNumber(mauchlyResult.p, 4)}</td>
+            <td>${formatNumber(mauchlyResult.epsilon, 3)}</td>
+            <td><span class="${sphVerdictClass}">${sphVerdictText}</span></td>
+          </tr></tbody>
+        </table>`;
+      } else {
+        mauchlyEl.innerHTML = `<div class="hint">Could not compute Mauchly's test.</div>`;
+      }
+    } else if (useParametric && k < 3) {
+      mauchlySection.style.display = "none";
+    } else {
+      mauchlySection.style.display = "block";
+      mauchlyEl.innerHTML = `<div class="hint">Skipped — non-parametric path selected (Shapiro-Wilk rejected normality).</div>`;
+    }
+
+    // Verdict banner
+    let verdictLabel, verdictDetail;
+    if (useParametric && sphericityOk) {
+      verdictLabel = "Parametric path";
+      verdictDetail = "Normality holds. Sphericity holds. Using RM-ANOVA (uncorrected) + paired t-tests with Holm correction.";
+    } else if (useParametric && !sphericityOk) {
+      verdictLabel = "Parametric path (GG-corrected)";
+      verdictDetail = `Normality holds. Sphericity violated. Using RM-ANOVA with Greenhouse-Geisser correction (&epsilon; = ${formatNumber(ggEpsilon, 3)}) + paired t-tests with Holm correction.`;
+    } else {
+      verdictLabel = "Non-parametric path";
+      verdictDetail = "Normality violated. Using Friedman test + Wilcoxon signed-rank with Holm correction.";
+    }
+    verdictEl.innerHTML = `
+      <div class="${useParametric ? "badgeOk" : "badgeWarn"}" style="padding: 10px 16px; font-size: 1.1em; display: inline-block; margin-bottom: 8px;">${verdictLabel}</div>
+      <div class="hint">${verdictDetail}</div>
+    `;
+
+    // Omnibus
+    let omnibusHtml = "";
+    if (useParametric) {
+      const anova = rmAnova(backspaceMatrix);
+      if (anova) {
+        let df1 = anova.df1;
+        let df2 = anova.df2;
+        let pValue = anova.p;
+        let correctionNote = "";
+
+        if (!sphericityOk) {
+          df1 = anova.df1 * ggEpsilon;
+          df2 = anova.df2 * ggEpsilon;
+          pValue = window.jStat ? 1 - jStat.centralF.cdf(anova.F, df1, df2) : anova.p;
+          correctionNote = ` (Greenhouse-Geisser corrected, &epsilon; = ${formatNumber(ggEpsilon, 3)})`;
+        }
+
+        const sig = pValue < 0.05;
+        const sigLabel = sig ? "Significant" : "Not significant";
+        const sigClass = sig ? "badgeOk" : "badgeWarn";
+
+        omnibusHtml = `
+          <div class="studyTitle">Repeated-measures ANOVA${correctionNote}</div>
+          <table class="table tableDense" style="margin-top: 6px">
+            <thead><tr><th>F</th><th>df1</th><th>df2</th><th>p</th><th>&eta;&sup2;<sub>p</sub></th><th>Result</th></tr></thead>
+            <tbody><tr>
+              <td>${formatNumber(anova.F, 3)}</td>
+              <td>${formatNumber(df1, 2)}</td>
+              <td>${formatNumber(df2, 2)}</td>
+              <td>${formatNumber(pValue, 4)}</td>
+              <td>${formatNumber(anova.eta, 3)}</td>
+              <td><span class="${sigClass}">${sigLabel} (p ${sig ? "<" : ">"} 0.05)</span></td>
+            </tr></tbody>
+          </table>
+          <div class="hint" style="margin-top: 4px">n = ${backspaceMatrix.length} participants (complete cases across all ${k} layouts).</div>
+        `;
+      } else {
+        omnibusHtml = `<div class="hint">Could not compute RM-ANOVA.</div>`;
+      }
+    } else {
+      const friedman = friedmanTest(backspaceMatrix);
+      if (friedman) {
+        const sig = friedman.p < 0.05;
+        const sigLabel = sig ? "Significant" : "Not significant";
+        const sigClass = sig ? "badgeOk" : "badgeWarn";
+
+        omnibusHtml = `
+          <div class="studyTitle">Friedman test</div>
+          <table class="table tableDense" style="margin-top: 6px">
+            <thead><tr><th>&chi;&sup2;</th><th>df</th><th>p</th><th>Kendall's W</th><th>Result</th></tr></thead>
+            <tbody><tr>
+              <td>${formatNumber(friedman.chi2, 3)}</td>
+              <td>${friedman.df}</td>
+              <td>${formatNumber(friedman.p, 4)}</td>
+              <td>${formatNumber(friedman.w, 3)}</td>
+              <td><span class="${sigClass}">${sigLabel} (p ${sig ? "<" : ">"} 0.05)</span></td>
+            </tr></tbody>
+          </table>
+          <div class="hint" style="margin-top: 4px">n = ${backspaceMatrix.length} participants (complete cases across all ${k} layouts).</div>
+        `;
+      } else {
+        omnibusHtml = `<div class="hint">Could not compute Friedman test.</div>`;
+      }
+    }
+    omnibusEl.innerHTML = omnibusHtml;
+
+    // Post-hoc
+    let posthocRows;
+    let posthocLabel;
+    if (useParametric) {
+      posthocRows = pairedTTests(backspaceMatrix, layouts);
+      posthocLabel = "Paired t-tests with Holm correction";
+    } else {
+      posthocRows = wilcoxonTests(backspaceMatrix, layouts);
+      posthocLabel = "Wilcoxon signed-rank with Holm correction";
+    }
+
+    if (posthocRows && posthocRows.length) {
+      let posthocHtml = `<div class="hint" style="margin-bottom: 6px">${posthocLabel}</div>`;
+      posthocHtml += `<table class="table tableDense">
+        <thead><tr><th>Pair</th><th>${useParametric ? "t" : "Z"}</th><th>p (raw)</th><th>p (adjusted)</th><th>Cohen's d</th><th>Result</th></tr></thead><tbody>`;
+      posthocRows.forEach((row) => {
+        const sig = row.pAdj < 0.05;
+        const sigClass = sig ? "badgeOk" : "badgeWarn";
+        const sigText = sig ? "Significant" : "Not significant";
+        const statValue = useParametric ? row.t : row.z;
+        posthocHtml += `<tr>
+          <td>${row.pair}</td>
+          <td>${formatNumber(statValue, 3)}</td>
+          <td>${formatNumber(row.p, 4)}</td>
+          <td>${formatNumber(row.pAdj, 4)}</td>
+          <td>${formatNumber(row.effect, 3)}</td>
+          <td><span class="${sigClass}">${sigText}</span></td>
+        </tr>`;
+      });
+      posthocHtml += "</tbody></table>";
+      posthocEl.innerHTML = posthocHtml;
+    } else {
+      posthocEl.innerHTML = `<div class="hint">No post-hoc comparisons available.</div>`;
+    }
+
+    // Charts
+    let canPlot = true;
+    if (statusEl) canPlot = ensureLibraries(statusEl);
+    if (canPlot) {
+      const colorMap = createLayoutColorMap(layouts);
+      plotDistribution("backspaceCount", layouts, analysis.perLayoutParticipantMeans, colorMap);
+      plotMeanCi("backspaceCount", layouts, analysis.perLayoutParticipantMeans, colorMap);
+      plotPaired("backspaceCount", layouts, backspaceMatrix, backspaceParticipants, colorMap);
+    }
+  }
+
+  function renderErrorRateAnalysis(analysis, statusEl) {
+    const layouts = analysis.layouts;
+    const { participants: errorRateParticipants, matrix: errorRateMatrix } = getCompleteCaseMatrix(
+      "errorRate",
+      analysis.participantMeans,
+      layouts
+    );
+    const k = layouts.length;
+
+    const verdictEl = $("errorRateAssumptionVerdict");
+    const shapiroEl = $("errorRateShapiroResults");
+    const mauchlySection = $("errorRateMauchlySection");
+    const mauchlyEl = $("errorRateMauchlyResults");
+    const omnibusEl = $("errorRateOmnibus");
+    const posthocEl = $("errorRatePosthoc");
+
+    if (errorRateParticipants.length < 3) {
+      verdictEl.innerHTML = `<div class="badgeWarn" style="padding: 10px; font-size: 1.1em;">Not enough complete-case participants (${errorRateParticipants.length}) to run assumption checks. Need at least 3.</div>`;
+      shapiroEl.innerHTML = "";
+      mauchlySection.style.display = "none";
+      omnibusEl.innerHTML = `<div class="hint">Not enough complete-case participants to run inferential tests.</div>`;
+      posthocEl.innerHTML = "";
+      return;
+    }
+
+    // Shapiro-Wilk on pairwise error rate differences
+    const shapiroResults = [];
+    let allNormal = true;
+    for (let a = 0; a < k; a++) {
+      for (let b = a + 1; b < k; b++) {
+        const diffs = errorRateMatrix.map((row) => row[a] - row[b]);
+        const sw = shapiroWilk(diffs);
+        const pass = sw && sw.p > 0.05;
+        if (!pass) allNormal = false;
+        shapiroResults.push({
+          pairLabel: `${layouts[a]} vs ${layouts[b]}`,
+          W: sw ? sw.W : null,
+          p: sw ? sw.p : null,
+          pass,
+        });
+      }
+    }
+
+    const useParametric = allNormal;
+
+    // Render Shapiro-Wilk table
+    let shapiroHtml = `<table class="table tableDense">
+      <thead><tr><th>Pair (difference)</th><th>W</th><th>p</th><th>Verdict</th></tr></thead><tbody>`;
+    shapiroResults.forEach((row) => {
+      const verdictClass = row.pass ? "badgeOk" : "badgeWarn";
+      const verdictText = row.pass ? "Normal (p > 0.05)" : "Non-normal (p <= 0.05)";
+      shapiroHtml += `<tr>
+        <td>${row.pairLabel}</td>
+        <td>${formatNumber(row.W, 4)}</td>
+        <td>${formatNumber(row.p, 4)}</td>
+        <td><span class="${verdictClass}">${verdictText}</span></td>
+      </tr>`;
+    });
+    shapiroHtml += "</tbody></table>";
+    shapiroEl.innerHTML = shapiroHtml;
+
+    // Mauchly's test (only if parametric path and k >= 3)
+    let sphericityOk = true;
+    let ggEpsilon = 1;
+    let mauchlyResult = null;
+
+    if (useParametric && k >= 3) {
+      mauchlySection.style.display = "block";
+      mauchlyResult = mauchlyTest(errorRateMatrix);
+      if (mauchlyResult) {
+        sphericityOk = mauchlyResult.p > 0.05;
+        ggEpsilon = mauchlyResult.epsilon;
+        const sphVerdictClass = sphericityOk ? "badgeOk" : "badgeWarn";
+        const sphVerdictText = sphericityOk
+          ? "Sphericity holds (p > 0.05)"
+          : `Sphericity violated (p <= 0.05) — GG epsilon = ${formatNumber(ggEpsilon, 3)}`;
+        mauchlyEl.innerHTML = `<table class="table tableDense">
+          <thead><tr><th>W</th><th>&chi;&sup2;</th><th>df</th><th>p</th><th>GG &epsilon;</th><th>Verdict</th></tr></thead>
+          <tbody><tr>
+            <td>${formatNumber(mauchlyResult.W, 4)}</td>
+            <td>${formatNumber(mauchlyResult.chi2, 3)}</td>
+            <td>${mauchlyResult.df}</td>
+            <td>${formatNumber(mauchlyResult.p, 4)}</td>
+            <td>${formatNumber(mauchlyResult.epsilon, 3)}</td>
+            <td><span class="${sphVerdictClass}">${sphVerdictText}</span></td>
+          </tr></tbody>
+        </table>`;
+      } else {
+        mauchlyEl.innerHTML = `<div class="hint">Could not compute Mauchly's test.</div>`;
+      }
+    } else if (useParametric && k < 3) {
+      mauchlySection.style.display = "none";
+    } else {
+      mauchlySection.style.display = "block";
+      mauchlyEl.innerHTML = `<div class="hint">Skipped — non-parametric path selected (Shapiro-Wilk rejected normality).</div>`;
+    }
+
+    // Verdict banner
+    let verdictLabel, verdictDetail;
+    if (useParametric && sphericityOk) {
+      verdictLabel = "Parametric path";
+      verdictDetail = "Normality holds. Sphericity holds. Using RM-ANOVA (uncorrected) + paired t-tests with Holm correction.";
+    } else if (useParametric && !sphericityOk) {
+      verdictLabel = "Parametric path (GG-corrected)";
+      verdictDetail = `Normality holds. Sphericity violated. Using RM-ANOVA with Greenhouse-Geisser correction (&epsilon; = ${formatNumber(ggEpsilon, 3)}) + paired t-tests with Holm correction.`;
+    } else {
+      verdictLabel = "Non-parametric path";
+      verdictDetail = "Normality violated. Using Friedman test + Wilcoxon signed-rank with Holm correction.";
+    }
+    verdictEl.innerHTML = `
+      <div class="${useParametric ? "badgeOk" : "badgeWarn"}" style="padding: 10px 16px; font-size: 1.1em; display: inline-block; margin-bottom: 8px;">${verdictLabel}</div>
+      <div class="hint">${verdictDetail}</div>
+    `;
+
+    // Omnibus
+    let omnibusHtml = "";
+    if (useParametric) {
+      const anova = rmAnova(errorRateMatrix);
+      if (anova) {
+        let df1 = anova.df1;
+        let df2 = anova.df2;
+        let pValue = anova.p;
+        let correctionNote = "";
+
+        if (!sphericityOk) {
+          df1 = anova.df1 * ggEpsilon;
+          df2 = anova.df2 * ggEpsilon;
+          pValue = window.jStat ? 1 - jStat.centralF.cdf(anova.F, df1, df2) : anova.p;
+          correctionNote = ` (Greenhouse-Geisser corrected, &epsilon; = ${formatNumber(ggEpsilon, 3)})`;
+        }
+
+        const sig = pValue < 0.05;
+        const sigLabel = sig ? "Significant" : "Not significant";
+        const sigClass = sig ? "badgeOk" : "badgeWarn";
+
+        omnibusHtml = `
+          <div class="studyTitle">Repeated-measures ANOVA${correctionNote}</div>
+          <table class="table tableDense" style="margin-top: 6px">
+            <thead><tr><th>F</th><th>df1</th><th>df2</th><th>p</th><th>&eta;&sup2;<sub>p</sub></th><th>Result</th></tr></thead>
+            <tbody><tr>
+              <td>${formatNumber(anova.F, 3)}</td>
+              <td>${formatNumber(df1, 2)}</td>
+              <td>${formatNumber(df2, 2)}</td>
+              <td>${formatNumber(pValue, 4)}</td>
+              <td>${formatNumber(anova.eta, 3)}</td>
+              <td><span class="${sigClass}">${sigLabel} (p ${sig ? "<" : ">"} 0.05)</span></td>
+            </tr></tbody>
+          </table>
+          <div class="hint" style="margin-top: 4px">n = ${errorRateMatrix.length} participants (complete cases across all ${k} layouts).</div>
+        `;
+      } else {
+        omnibusHtml = `<div class="hint">Could not compute RM-ANOVA.</div>`;
+      }
+    } else {
+      const friedman = friedmanTest(errorRateMatrix);
+      if (friedman) {
+        const sig = friedman.p < 0.05;
+        const sigLabel = sig ? "Significant" : "Not significant";
+        const sigClass = sig ? "badgeOk" : "badgeWarn";
+
+        omnibusHtml = `
+          <div class="studyTitle">Friedman test</div>
+          <table class="table tableDense" style="margin-top: 6px">
+            <thead><tr><th>&chi;&sup2;</th><th>df</th><th>p</th><th>Kendall's W</th><th>Result</th></tr></thead>
+            <tbody><tr>
+              <td>${formatNumber(friedman.chi2, 3)}</td>
+              <td>${friedman.df}</td>
+              <td>${formatNumber(friedman.p, 4)}</td>
+              <td>${formatNumber(friedman.w, 3)}</td>
+              <td><span class="${sigClass}">${sigLabel} (p ${sig ? "<" : ">"} 0.05)</span></td>
+            </tr></tbody>
+          </table>
+          <div class="hint" style="margin-top: 4px">n = ${errorRateMatrix.length} participants (complete cases across all ${k} layouts).</div>
+        `;
+      } else {
+        omnibusHtml = `<div class="hint">Could not compute Friedman test.</div>`;
+      }
+    }
+    omnibusEl.innerHTML = omnibusHtml;
+
+    // Post-hoc
+    let posthocRows;
+    let posthocLabel;
+    if (useParametric) {
+      posthocRows = pairedTTests(errorRateMatrix, layouts);
+      posthocLabel = "Paired t-tests with Holm correction";
+    } else {
+      posthocRows = wilcoxonTests(errorRateMatrix, layouts);
+      posthocLabel = "Wilcoxon signed-rank with Holm correction";
+    }
+
+    if (posthocRows && posthocRows.length) {
+      let posthocHtml = `<div class="hint" style="margin-bottom: 6px">${posthocLabel}</div>`;
+      posthocHtml += `<table class="table tableDense">
+        <thead><tr><th>Pair</th><th>${useParametric ? "t" : "Z"}</th><th>p (raw)</th><th>p (adjusted)</th><th>Cohen's d</th><th>Result</th></tr></thead><tbody>`;
+      posthocRows.forEach((row) => {
+        const sig = row.pAdj < 0.05;
+        const sigClass = sig ? "badgeOk" : "badgeWarn";
+        const sigText = sig ? "Significant" : "Not significant";
+        const statValue = useParametric ? row.t : row.z;
+        posthocHtml += `<tr>
+          <td>${row.pair}</td>
+          <td>${formatNumber(statValue, 3)}</td>
+          <td>${formatNumber(row.p, 4)}</td>
+          <td>${formatNumber(row.pAdj, 4)}</td>
+          <td>${formatNumber(row.effect, 3)}</td>
+          <td><span class="${sigClass}">${sigText}</span></td>
+        </tr>`;
+      });
+      posthocHtml += "</tbody></table>";
+      posthocEl.innerHTML = posthocHtml;
+    } else {
+      posthocEl.innerHTML = `<div class="hint">No post-hoc comparisons available.</div>`;
+    }
+
+    // Charts
+    let canPlot = true;
+    if (statusEl) canPlot = ensureLibraries(statusEl);
+    if (canPlot) {
+      const colorMap = createLayoutColorMap(layouts);
+      plotDistribution("errorRate", layouts, analysis.perLayoutParticipantMeans, colorMap);
+      plotMeanCi("errorRate", layouts, analysis.perLayoutParticipantMeans, colorMap);
+      plotPaired("errorRate", layouts, errorRateMatrix, errorRateParticipants, colorMap);
+    }
+  }
+
+  function renderDescriptiveSummaryTable(analysis) {
+    const tbody = $("analysisDescriptiveSummaryBody");
+    const metricOrder = ["wpm", "errorRate", "backspaceCount", "editDistance", "elapsedSeconds"];
+    const metricMeta = new Map(METRICS.map((metric) => [metric.key, metric]));
+
+    const rows = analysis.layouts
+      .map((layoutId) => {
+        const metrics = analysis.perLayoutParticipantMeans.get(layoutId) || {};
+        const wpmValues = metrics.wpm || [];
+        const fallbackN = Math.max(
+          0,
+          ...metricOrder.map((key) => (metrics[key] ? metrics[key].length : 0))
+        );
+        const n = wpmValues.length || fallbackN;
+
+        const cells = metricOrder.map((key) => {
+          const values = metrics[key] || [];
+          if (!values.length) return "<td>n/a</td>";
+          const stats = meanAndCi(values);
+          const sd = stdev(values);
+          const decimals = metricMeta.get(key)?.decimals ?? 2;
+          const meanText = Number.isFinite(stats.mean) ? stats.mean.toFixed(decimals) : "n/a";
+          const sdText = Number.isFinite(sd) ? sd.toFixed(decimals) : "n/a";
+          const ciText = Number.isFinite(stats.ci) ? stats.ci.toFixed(decimals) : "n/a";
+          return `<td>${meanText} +/- ${sdText} (95% CI ${ciText})</td>`;
+        });
+
+        return `<tr><td>${layoutId}</td><td>${n}</td>${cells.join("")}</tr>`;
+      })
+      .join("");
+
+    tbody.innerHTML = rows || `<tr><td colspan="7" class="hint">No summary data available.</td></tr>`;
   }
 
   // ── NASA-TLX analysis ──────────────────────────────────────────────────────
@@ -2009,6 +2630,13 @@
       "1. WPM distribution (violin/box).",
       "2. WPM mean ± 95% CI.",
       "3. WPM paired lines (within-subject).",
+      "4. WPM post-hoc mean differences (95% CI).",
+      "5. Backspace count distribution (violin/box).",
+      "6. Backspace count mean ± 95% CI.",
+      "7. Backspace count paired lines (within-subject).",
+      "8. Error rate distribution (violin/box).",
+      "9. Error rate mean ± 95% CI.",
+      "10. Error rate paired lines (within-subject).",
       "",
     ];
     return lines.join("\n");
