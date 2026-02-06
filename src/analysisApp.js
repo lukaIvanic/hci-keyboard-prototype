@@ -58,6 +58,15 @@
 
   const CI_Z = 1.96;
 
+  const METRIC_DISPLAY = {
+    wpm: { label: "WPM", scale: 1 },
+    errorRate: { label: "Error rate (%)", scale: 100 },
+    backspaceCount: { label: "Backspace count", scale: 1 },
+    editDistance: { label: "Edit distance (chars)", scale: 1 },
+    elapsedSeconds: { label: "Elapsed time (s)", scale: 1 },
+    tlxOverall: { label: "TLX score (0-100)", scale: 1 },
+  };
+
   let lastRows = null;
   let lastTlxRows = [];
   let lastThresholds = null;
@@ -68,6 +77,10 @@
     const el = document.getElementById(id);
     if (!el) throw new Error(`Missing element #${id}`);
     return el;
+  }
+
+  function getMetricDisplay(metricKey) {
+    return METRIC_DISPLAY[metricKey] || { label: metricKey, scale: 1 };
   }
 
   function safeParse(json, fallback) {
@@ -1255,8 +1268,11 @@
   function plotDistribution(metricKey, layouts, perLayoutMeans, colorMap) {
     const el = document.getElementById(`chart-${metricKey}-dist`);
     if (!el) return;
+    const { label, scale } = getMetricDisplay(metricKey);
     const traces = layouts.map((layoutId) => {
-      const values = perLayoutMeans.get(layoutId)?.[metricKey] ?? [];
+      const values = (perLayoutMeans.get(layoutId)?.[metricKey] ?? []).map((v) =>
+        Number.isFinite(v) ? v * scale : v
+      );
       return {
         type: "violin",
         y: values,
@@ -1269,12 +1285,18 @@
         line: { color: colorMap.get(layoutId) },
       };
     });
-    Plotly.react(el, traces, plotlyLayoutBase("Distribution"));
+    const layout = {
+      ...plotlyLayoutBase("Distribution"),
+      xaxis: { ...plotlyLayoutBase("").xaxis, title: { text: "Layout" } },
+      yaxis: { ...plotlyLayoutBase("").yaxis, title: { text: label } },
+    };
+    Plotly.react(el, traces, layout);
   }
 
   function plotMeanCi(metricKey, layouts, perLayoutMeans, colorMap) {
     const el = document.getElementById(`chart-${metricKey}-mean`);
     if (!el) return;
+    const { label, scale } = getMetricDisplay(metricKey);
     const means = [];
     const ci = [];
     layouts.forEach((layoutId) => {
@@ -1282,8 +1304,8 @@
       const m = mean(values) ?? 0;
       const sd = stdev(values) ?? 0;
       const err = values.length > 1 ? (CI_Z * sd) / Math.sqrt(values.length) : 0;
-      means.push(m);
-      ci.push(err);
+      means.push(m * scale);
+      ci.push(err * scale);
     });
     const trace = {
       type: "bar",
@@ -1292,19 +1314,25 @@
       marker: { color: layouts.map((id) => colorMap.get(id)) },
       error_y: { type: "data", array: ci, visible: true },
     };
-    Plotly.react(el, [trace], plotlyLayoutBase("Mean + 95% CI"));
+    const layout = {
+      ...plotlyLayoutBase("Mean + 95% CI"),
+      xaxis: { ...plotlyLayoutBase("").xaxis, title: { text: "Layout" } },
+      yaxis: { ...plotlyLayoutBase("").yaxis, title: { text: label } },
+    };
+    Plotly.react(el, [trace], layout);
   }
 
   function plotPaired(metricKey, layouts, matrix, participants, colorMap) {
     const el = document.getElementById(`chart-${metricKey}-paired`);
     if (!el) return;
+    const { label, scale } = getMetricDisplay(metricKey);
     const traces = [];
     for (let i = 0; i < matrix.length; i++) {
       traces.push({
         type: "scatter",
         mode: "lines+markers",
         x: layouts,
-        y: matrix[i],
+        y: matrix[i].map((v) => (Number.isFinite(v) ? v * scale : v)),
         name: participants[i],
         line: { color: "rgba(255,255,255,0.18)" },
         marker: { size: 4, color: "rgba(255,255,255,0.45)" },
@@ -1316,13 +1344,18 @@
       type: "scatter",
       mode: "lines+markers",
       x: layouts,
-      y: layouts.map((_, idx) => mean(matrix.map((row) => row[idx])) ?? 0),
+      y: layouts.map((_, idx) => (mean(matrix.map((row) => row[idx])) ?? 0) * scale),
       name: "Mean",
       line: { color: "#6aa6ff", width: 3 },
       marker: { size: 7, color: "#6aa6ff" },
     };
     traces.push(meanTrace);
-    Plotly.react(el, traces, plotlyLayoutBase("Paired lines"));
+    const layout = {
+      ...plotlyLayoutBase("Paired lines"),
+      xaxis: { ...plotlyLayoutBase("").xaxis, title: { text: "Layout" } },
+      yaxis: { ...plotlyLayoutBase("").yaxis, title: { text: label } },
+    };
+    Plotly.react(el, traces, layout);
   }
 
   function setChartVisibility(chartId, visible) {
@@ -1335,6 +1368,7 @@
   function plotPosthocDifferences(metricKey, layouts, matrix, posthocRows) {
     const el = document.getElementById(`chart-${metricKey}-posthoc`);
     if (!el) return;
+    const { label, scale } = getMetricDisplay(metricKey);
     if (!posthocRows || !posthocRows.length) {
       el.innerHTML = `<div class="hint">No post-hoc comparisons available.</div>`;
       return;
@@ -1355,7 +1389,10 @@
       const bIdx = layouts.indexOf(bLabel);
       if (aIdx === -1 || bIdx === -1) return;
 
-      const diffs = matrix.map((r) => r[aIdx] - r[bIdx]).filter((v) => Number.isFinite(v));
+      const diffs = matrix
+        .map((r) => r[aIdx] - r[bIdx])
+        .filter((v) => Number.isFinite(v))
+        .map((v) => v * scale);
       if (!diffs.length) return;
       const stats = meanAndCi(diffs);
       if (!Number.isFinite(stats.mean) || !Number.isFinite(stats.ci)) return;
@@ -1390,7 +1427,7 @@
         ...plotlyLayoutBase("").xaxis,
         zeroline: true,
         zerolinecolor: "#bbb",
-        title: { text: "Mean difference (A - B)" },
+        title: { text: `Mean difference (A - B) [${label}]` },
       },
       yaxis: { ...plotlyLayoutBase("").yaxis, automargin: true },
     };
@@ -1697,7 +1734,7 @@
     if (posthocRows && posthocRows.length) {
       let posthocHtml = `<div class="hint" style="margin-bottom: 6px">${posthocLabel}</div>`;
       posthocHtml += `<table class="table tableDense">
-        <thead><tr><th>Pair</th><th>${useParametric ? "t" : "Z"}</th><th>p (raw)</th><th>p (adjusted)</th><th>Cohen's d</th><th>Result</th></tr></thead><tbody>`;
+        <thead><tr><th>Pair</th><th>${useParametric ? "t" : "Z"}</th><th>p (raw)</th><th>p (adjusted)</th><th>${useParametric ? "Cohen's d" : "r"}</th><th>Result</th></tr></thead><tbody>`;
       posthocRows.forEach((row) => {
         const sig = row.pAdj < 0.05;
         const sigClass = sig ? "badgeOk" : "badgeWarn";
@@ -1930,7 +1967,7 @@
     if (posthocRows && posthocRows.length) {
       let posthocHtml = `<div class="hint" style="margin-bottom: 6px">${posthocLabel}</div>`;
       posthocHtml += `<table class="table tableDense">
-        <thead><tr><th>Pair</th><th>${useParametric ? "t" : "Z"}</th><th>p (raw)</th><th>p (adjusted)</th><th>Cohen's d</th><th>Result</th></tr></thead><tbody>`;
+        <thead><tr><th>Pair</th><th>${useParametric ? "t" : "Z"}</th><th>p (raw)</th><th>p (adjusted)</th><th>${useParametric ? "Cohen's d" : "r"}</th><th>Result</th></tr></thead><tbody>`;
       posthocRows.forEach((row) => {
         const sig = row.pAdj < 0.05;
         const sigClass = sig ? "badgeOk" : "badgeWarn";
@@ -2159,7 +2196,7 @@
     if (posthocRows && posthocRows.length) {
       let posthocHtml = `<div class="hint" style="margin-bottom: 6px">${posthocLabel}</div>`;
       posthocHtml += `<table class="table tableDense">
-        <thead><tr><th>Pair</th><th>${useParametric ? "t" : "Z"}</th><th>p (raw)</th><th>p (adjusted)</th><th>Cohen's d</th><th>Result</th></tr></thead><tbody>`;
+        <thead><tr><th>Pair</th><th>${useParametric ? "t" : "Z"}</th><th>p (raw)</th><th>p (adjusted)</th><th>${useParametric ? "Cohen's d" : "r"}</th><th>Result</th></tr></thead><tbody>`;
       posthocRows.forEach((row) => {
         const sig = row.pAdj < 0.05;
         const sigClass = sig ? "badgeOk" : "badgeWarn";
@@ -2277,6 +2314,10 @@
         ...plotlyLayoutBase("").yaxis,
         range: [0, 105],
         title: { text: "Score (0-100)" },
+      },
+      xaxis: {
+        ...plotlyLayoutBase("").xaxis,
+        title: { text: "Subscale" },
       },
     };
     Plotly.react(el, traces, layout);
@@ -2481,7 +2522,7 @@
     if (posthocRows && posthocRows.length) {
       let posthocHtml = `<div class="hint" style="margin-bottom: 6px">${posthocLabel}</div>`;
       posthocHtml += `<table class="table tableDense">
-        <thead><tr><th>Pair</th><th>${useParametric ? "t" : "Z"}</th><th>p (raw)</th><th>p (adjusted)</th><th>Cohen's d</th><th>Result</th></tr></thead><tbody>`;
+        <thead><tr><th>Pair</th><th>${useParametric ? "t" : "Z"}</th><th>p (raw)</th><th>p (adjusted)</th><th>${useParametric ? "Cohen's d" : "r"}</th><th>Result</th></tr></thead><tbody>`;
       posthocRows.forEach((row) => {
         const sig = row.pAdj < 0.05;
         const statValue = useParametric ? row.t : row.z;
@@ -2585,7 +2626,7 @@
       const posthocRows = wilcoxonTests(matrix, layouts);
       if (posthocRows && posthocRows.length) {
         testsHtml += `<table class="table tableDense" style="margin-top: 4px">
-          <thead><tr><th>Pair</th><th>Z</th><th>p (raw)</th><th>p (adj)</th><th>Cohen's d</th><th>Result</th></tr></thead><tbody>`;
+          <thead><tr><th>Pair</th><th>Z</th><th>p (raw)</th><th>p (adj)</th><th>r</th><th>Result</th></tr></thead><tbody>`;
         posthocRows.forEach((row) => {
           const sig = row.pAdj < 0.05;
           testsHtml += `<tr>
